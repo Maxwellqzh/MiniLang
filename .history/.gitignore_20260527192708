@@ -1,0 +1,15 @@
+dist-newstyle/
+dist/
+.stack-work/
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+*.prof
+*.aux
+*.hp
+*.eventlog
+.cabal-sandbox/
+cabal.sandbox.config
+.DS_Store
+.vscode/
