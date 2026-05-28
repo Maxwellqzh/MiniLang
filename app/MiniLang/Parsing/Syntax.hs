@@ -1,4 +1,4 @@
-module MiniLang.Syntax where
+module MiniLang.Parsing.Syntax where
 
 newtype Program = Program [Stmt]
   deriving (Eq, Show)

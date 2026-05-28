@@ -1,10 +1,10 @@
-module MiniLang.Lexer
+module MiniLang.Parsing.Lexer
   ( LexError (..)
   , lexProgram
   ) where
 
 import Data.Char (chr, digitToInt, isAlpha, isAlphaNum, isDigit, isSpace, ord)
-import MiniLang.Token
+import MiniLang.Parsing.Token
 
 data LexError = LexError
   { lexErrorLine :: Int

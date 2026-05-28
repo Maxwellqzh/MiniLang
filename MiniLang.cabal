@@ -58,13 +58,13 @@ executable MiniLang
     main-is:          Main.hs
     hs-source-dirs:   app
     other-modules:
-        MiniLang.Syntax
-        MiniLang.Token
-        MiniLang.Lexer
-        MiniLang.Parser
-        MiniLang.Eval
-        MiniLang.Value
-        MiniLang.Error
+        MiniLang.Parsing.Syntax
+        MiniLang.Parsing.Token
+        MiniLang.Parsing.Lexer
+        MiniLang.Parsing.Parser
+        MiniLang.Backend.Eval
+        MiniLang.Backend.Value
+        MiniLang.Backend.Error
         MiniLang.Repl
     build-depends:
         base >=4.14 && <5,

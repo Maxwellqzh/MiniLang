@@ -1,8 +1,8 @@
-module MiniLang.Parser where
+module MiniLang.Parsing.Parser where
 
-import MiniLang.Lexer (lexProgram)
-import MiniLang.Syntax
-import MiniLang.Token
+import MiniLang.Parsing.Lexer (lexProgram)
+import MiniLang.Parsing.Syntax
+import MiniLang.Parsing.Token
 
 newtype ParseError = ParseError String
   deriving (Eq, Show)

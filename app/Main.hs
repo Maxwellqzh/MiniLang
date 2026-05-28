@@ -1,7 +1,8 @@
 module Main where
 
-import MiniLang.Lexer (lexProgram)
-import MiniLang.Parser (parseProgram)
+import MiniLang.Backend.Eval (runProgram)
+import MiniLang.Parsing.Lexer (lexProgram)
+import MiniLang.Parsing.Parser (parseProgram)
 
 main :: IO ()
 main = do
@@ -19,4 +20,14 @@ main = do
     Right tokens -> do
       mapM_ print tokens
       putStrLn "=== Parser Output ==="
-      print (parseProgram source)
+      case parseProgram source of
+        Left err -> print err
+        Right program -> do
+          print program
+          putStrLn "=== Eval Output ==="
+          case runProgram program of
+            Left err -> print err
+            Right (output, env) -> do
+              mapM_ putStrLn output
+              putStrLn "=== Final Env ==="
+              print env

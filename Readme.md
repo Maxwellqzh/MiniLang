@@ -1,11 +1,11 @@
 # MiniLang
 
-MiniLang 是一个用 Haskell 实现的迷你语言解释器项目。当前已经完成 `Token`、`Lexer` 和 `Parser`，能够把源代码解析成 AST，并且已经为函数、递归和闭包相关语义预留好了语法结构。
+MiniLang 是一个用 Haskell 实现的迷你语言解释器项目。当前代码按 `Parsing` 和 `Backend` 两部分组织：前者负责把源代码解析成 AST，后者负责解释执行 AST。
 
 当前流程：
 
 ```txt
-source code -> Lexer -> [Token] -> Parser -> Program
+source code -> Lexer -> [Token] -> Parser -> Program -> Eval -> Output + Env
 ```
 
 ## 语言特点
@@ -21,12 +21,14 @@ MiniLang 设计上具有以下特点：
 
 ## 项目结构
 
-- `app/MiniLang/Token.hs`：词法单元定义
-- `app/MiniLang/Lexer.hs`：词法分析器
-- `app/MiniLang/Syntax.hs`：抽象语法树定义
-- `app/MiniLang/Parser.hs`：语法分析器
-- `app/MiniLang/Eval.hs`：解释执行，当前待完善
-- `app/Main.hs`：调试入口，会打印 Lexer 和 Parser 结果
+- `app/MiniLang/Parsing/Token.hs`：词法单元定义
+- `app/MiniLang/Parsing/Lexer.hs`：词法分析器
+- `app/MiniLang/Parsing/Syntax.hs`：抽象语法树定义
+- `app/MiniLang/Parsing/Parser.hs`：语法分析器
+- `app/MiniLang/Backend/Value.hs`：运行时值和环境定义
+- `app/MiniLang/Backend/Error.hs`：运行时错误定义
+- `app/MiniLang/Backend/Eval.hs`：解释执行
+- `app/Main.hs`：调试入口，会打印 Lexer、Parser 和 Eval 结果
 - `examples/sample.minilang`：示例输入文件
 
 ## 语言设定
@@ -515,7 +517,8 @@ cabal run MiniLang
 - 打印源代码
 - 打印 Lexer 输出
 - 打印 Parser 输出
+- 打印 Eval 输出和最终环境
 
 ## 下一步
 
-现在 `Lexer`、`Parser` 和函数语法都已经接好了，而且调用 AST 已经升级成更适合闭包的形式。下一步最自然的是实现 `Eval`，让函数值、递归求值和闭包环境真正执行起来。
+现在 `Parsing` 目录负责词法、语法和 AST，`Backend` 目录负责运行时值、错误和解释执行。`Main` 仍作为调试入口串联完整流程。
