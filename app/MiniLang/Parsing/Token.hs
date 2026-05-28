@@ -1,4 +1,4 @@
-module MiniLang.Token where
+module MiniLang.Parsing.Token where
 
 data Token
   = TokLet
