@@ -59,6 +59,8 @@ executable MiniLang
     hs-source-dirs:   app
     other-modules:
         MiniLang.Syntax
+        MiniLang.Token
+        MiniLang.Lexer
         MiniLang.Parser
         MiniLang.Eval
         MiniLang.Value
