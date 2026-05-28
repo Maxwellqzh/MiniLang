@@ -1,0 +1,213 @@
+TokLet
+TokIdent "x"
+TokAssign
+TokInt 5
+TokSemicolon
+TokLet
+TokIdent "y"
+TokAssign
+TokInt 2
+TokStar
+TokLParen
+TokIdent "x"
+TokPlus
+TokInt 3
+TokRParen
+TokSemicolon
+TokLet
+TokIdent "ready"
+TokAssign
+TokTrue
+TokSemicolon
+TokLet
+TokIdent "stopped"
+TokAssign
+TokFalse
+TokSemicolon
+TokLet
+TokIdent "msg"
+TokAssign
+TokString "hello\nworld"
+TokSemicolon
+TokFn
+TokIdent "add"
+TokLParen
+TokIdent "a"
+TokComma
+TokIdent "b"
+TokRParen
+TokLBrace
+TokReturn
+TokIdent "a"
+TokPlus
+TokIdent "b"
+TokSemicolon
+TokRBrace
+TokFn
+TokIdent "fact"
+TokLParen
+TokIdent "n"
+TokRParen
+TokLBrace
+TokIf
+TokLParen
+TokIdent "n"
+TokEq
+TokInt 0
+TokRParen
+TokLBrace
+TokReturn
+TokInt 1
+TokSemicolon
+TokRBrace
+TokElse
+TokLBrace
+TokReturn
+TokIdent "n"
+TokStar
+TokIdent "fact"
+TokLParen
+TokIdent "n"
+TokMinus
+TokInt 1
+TokRParen
+TokSemicolon
+TokRBrace
+TokRBrace
+TokFn
+TokIdent "makeAdder"
+TokLParen
+TokIdent "base"
+TokRParen
+TokLBrace
+TokFn
+TokIdent "inner"
+TokLParen
+TokIdent "value"
+TokRParen
+TokLBrace
+TokReturn
+TokIdent "base"
+TokPlus
+TokIdent "value"
+TokSemicolon
+TokRBrace
+TokReturn
+TokIdent "inner"
+TokSemicolon
+TokRBrace
+TokLet
+TokIdent "sum"
+TokAssign
+TokIdent "add"
+TokLParen
+TokIdent "x"
+TokComma
+TokIdent "y"
+TokRParen
+TokSemicolon
+TokLet
+TokIdent "half"
+TokAssign
+TokIdent "sum"
+TokSlash
+TokInt 2
+TokSemicolon
+TokLet
+TokIdent "isSmall"
+TokAssign
+TokIdent "x"
+TokLt
+TokIdent "y"
+TokSemicolon
+TokLet
+TokIdent "within"
+TokAssign
+TokIdent "y"
+TokLe
+TokIdent "sum"
+TokSemicolon
+TokLet
+TokIdent "larger"
+TokAssign
+TokIdent "sum"
+TokGt
+TokIdent "x"
+TokSemicolon
+TokLet
+TokIdent "enough"
+TokAssign
+TokIdent "sum"
+TokGe
+TokIdent "half"
+TokSemicolon
+TokLet
+TokIdent "same"
+TokAssign
+TokIdent "sum"
+TokEq
+TokIdent "half"
+TokSemicolon
+TokLet
+TokIdent "different"
+TokAssign
+TokIdent "sum"
+TokNeq
+TokIdent "half"
+TokSemicolon
+TokLet
+TokIdent "adder"
+TokAssign
+TokIdent "makeAdder"
+TokLParen
+TokInt 10
+TokRParen
+TokSemicolon
+TokLet
+TokIdent "closureResult"
+TokAssign
+TokIdent "adder"
+TokLParen
+TokInt 5
+TokRParen
+TokSemicolon
+TokLet
+TokIdent "factorial"
+TokAssign
+TokIdent "fact"
+TokLParen
+TokInt 5
+TokRParen
+TokSemicolon
+TokWhile
+TokLParen
+TokIdent "x"
+TokGt
+TokInt 0
+TokRParen
+TokLBrace
+TokIdent "x"
+TokAssign
+TokIdent "x"
+TokMinus
+TokInt 1
+TokSemicolon
+TokPrint
+TokIdent "x"
+TokSemicolon
+TokRBrace
+TokIf
+TokLParen
+TokIdent "different"
+TokRParen
+TokLBrace
+TokPrint
+TokIdent "msg"
+TokSemicolon
+TokRBrace
+TokElse
+TokLBrace
+TokPrint
+TokString "equal"
+TokSemicolon
+TokRBrace

@@ -1,0 +1,64 @@
+// Variable declarations and basic arithmetic
+let x = 5;
+let y = 2 * (x + 3);
+
+// Boolean literals
+let ready = true;
+let stopped = false;
+
+// String literal with escape sequence
+let msg = "hello\nworld";
+
+// Basic function definition and return
+fn add(a, b) {
+  return a + b;
+}
+
+// Recursive function: factorial
+fn fact(n) {
+  if (n == 0) {
+    return 1;
+  } else {
+    return n * fact(n - 1);
+  }
+}
+
+// Nested function for closure-style testing
+fn makeAdder(base) {
+  fn inner(value) {
+    return base + value;
+  }
+  return inner;
+}
+
+// Basic function call
+let sum = add(x, y);
+
+// Division and comparison operators
+let half = sum / 2;
+let isSmall = x < y;
+let within = y <= sum;
+let larger = sum > x;
+let enough = sum >= half;
+let same = sum == half;
+let different = sum != half;
+
+// Closure-friendly calls: returning a function and then calling it later
+let adder = makeAdder(10);
+let closureResult = adder(5);
+
+// Recursive call
+let factorial = fact(5);
+
+// While loop and reassignment
+while (x > 0) {
+  x = x - 1;
+  print x;
+}
+
+// If / else control flow
+if (different) {
+  print msg;
+} else {
+  print "equal";
+}

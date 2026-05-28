@@ -1,0 +1,16 @@
+let x = 42;
+let msg = "hello\nworld";
+fn add(a, b) {
+  return a + b;
+}
+
+let total = add(x, 8);
+print msg;
+print total;
+
+if (x >= 10) {
+  x = x + 1;
+  print "x updated";
+} else {
+  print "x too small";
+}

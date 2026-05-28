@@ -1,13 +1,22 @@
 module Main where
 
-import MiniLang.Syntax
+import MiniLang.Lexer (lexProgram)
+import MiniLang.Parser (parseProgram)
 
 main :: IO ()
 main = do
-  let program =
-        Program
-          [ SLet "x" (EInt 3)
-          , SLet "y" (EAdd (EVar "x") (EInt 4))
-          , SPrint (EVar "y")
-          ]
-  print program
+  let sampleFile = "examples/showcase.minilang"
+  source <- readFile sampleFile
+
+  putStrLn ("Source file: " ++ sampleFile)
+  putStrLn ""
+  putStrLn "=== Source ==="
+  putStrLn source
+  putStrLn "=== Lexer Output ==="
+
+  case lexProgram source of
+    Left err -> print err
+    Right tokens -> do
+      mapM_ print tokens
+      putStrLn "=== Parser Output ==="
+      print (parseProgram source)

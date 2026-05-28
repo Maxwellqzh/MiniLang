@@ -5,6 +5,8 @@ newtype Program = Program [Stmt]
 
 data Stmt
   = SLet String Expr
+  | SFun String [String] [Stmt]
+  | SReturn Expr
   | SAssign String Expr
   | SPrint Expr
   | SIf Expr [Stmt] [Stmt]
@@ -21,6 +23,10 @@ data Expr
   | EMul Expr Expr
   | EDiv Expr Expr
   | ELt Expr Expr
+  | ELe Expr Expr
   | EGt Expr Expr
+  | EGe Expr Expr
   | EEq Expr Expr
+  | ENeq Expr Expr
+  | ECall Expr [Expr]
   deriving (Eq, Show)
