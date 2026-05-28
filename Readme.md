@@ -1,49 +1,87 @@
 # MiniLang
 
-MiniLang 是一个用 Haskell 实现的迷你语言解释器项目。当前代码按 `Parsing` 和 `Backend` 两部分组织：前者负责把源代码解析成 AST，后者负责解释执行 AST。
+MiniLang 是一个用 Haskell 实现的迷你语言解释器项目。当前代码已经从单纯的词法/语法分析扩展到完整的解释执行流程，并按功能拆成 `Parsing` 和 `Backend` 两部分：
 
-当前流程：
+- `Parsing`：负责把源代码转换成 AST。
+- `Backend`：负责接收 AST，解释执行并输出结果。
+
+当前完整流程：
 
 ```txt
-source code -> Lexer -> [Token] -> Parser -> Program -> Eval -> Output + Env
+source code -> Lexer -> [Token] -> Parser -> Program AST -> Eval -> Output + Env
 ```
 
 ## 语言特点
 
-MiniLang 设计上具有以下特点：
+MiniLang 当前支持：
 
-- 支持基础运算：`+ - * / < <= > >= == !=`
-- 支持流程控制：`if / else`、`while`
-- 支持函数声明与调用：`fn name(...) { ... }`、`call(...)`
-- 支持递归：语法上允许函数在函数体内引用自身
-- 支持闭包友好的调用结构：函数调用 AST 使用 `ECall Expr [Expr]`
-- 支持单行注释：`// comment`
+- 基础运算：`+ - * / < <= > >= == !=`
+- 布尔、整数、字符串字面量
+- 变量定义与赋值：`let x = expr;`、`x = expr;`
+- 输出语句：`print expr;`
+- 流程控制：`if / else`、`while`
+- 函数定义与调用：`fn name(...) { ... }`、`name(...)`
+- `return` 从函数体中返回值
+- 递归函数，例如 `fact(n - 1)`
+- 闭包式函数返回和二次调用，例如 `makeAdder(10)(5)` 或先保存为变量再调用
+- 单行注释：`// comment`
 
 ## 项目结构
 
-- `app/MiniLang/Parsing/Token.hs`：词法单元定义
-- `app/MiniLang/Parsing/Lexer.hs`：词法分析器
-- `app/MiniLang/Parsing/Syntax.hs`：抽象语法树定义
-- `app/MiniLang/Parsing/Parser.hs`：语法分析器
-- `app/MiniLang/Backend/Value.hs`：运行时值和环境定义
-- `app/MiniLang/Backend/Error.hs`：运行时错误定义
-- `app/MiniLang/Backend/Eval.hs`：解释执行
-- `app/Main.hs`：调试入口，会打印 Lexer、Parser 和 Eval 结果
-- `examples/sample.minilang`：示例输入文件
+```txt
+app/
+  Main.hs
+  MiniLang/
+    Repl.hs
+    Parsing/
+      Token.hs
+      Lexer.hs
+      Syntax.hs
+      Parser.hs
+    Backend/
+      Value.hs
+      Error.hs
+      Eval.hs
+examples/
+  sample.minilang
+  showcase.minilang
+```
+
+主要模块职责：
+
+- `MiniLang.Parsing.Token`：定义词法单元 `Token`
+- `MiniLang.Parsing.Lexer`：把源代码字符串转换成 `[Token]`
+- `MiniLang.Parsing.Syntax`：定义 AST，包含 `Program`、`Stmt`、`Expr`
+- `MiniLang.Parsing.Parser`：把源码解析成 `Program`
+- `MiniLang.Backend.Value`：定义运行时值 `Value` 和环境 `Env`
+- `MiniLang.Backend.Error`：定义解释执行阶段的 `RuntimeError`
+- `MiniLang.Backend.Eval`：解释执行 AST，入口是 `runProgram`
+- `Main.hs`：调试入口，串联 Lexer、Parser 和 Eval
+- `MiniLang.Repl`：REPL 占位模块，当前尚未实现交互式执行
 
 ## 语言设定
 
 ### 基础语句
 
-- 变量定义：`let x = expr;`
-- 变量赋值：`x = expr;`
-- 输出语句：`print expr;`
-- 条件语句：`if (expr) { ... } else { ... }`
-- 循环语句：`while (expr) { ... }`
+```txt
+let x = expr;
+x = expr;
+print expr;
+if (expr) { ... } else { ... }
+while (expr) { ... }
+```
+
+语义说明：
+
+- `let x = expr;` 会把表达式结果绑定到当前环境，允许覆盖同名变量。
+- `x = expr;` 要求变量已经存在，否则返回 `UndefinedVariable`。
+- `print expr;` 会把值转换成文本并追加到输出列表。
+- `if` 和 `while` 的条件必须是布尔值。
+- `if` 和 `while` 不创建新的块级作用域，因此分支和循环里的赋值会更新当前环境。
 
 ### 函数语句
 
-- 函数定义：
+函数定义：
 
 ```txt
 fn add(a, b) {
@@ -51,15 +89,25 @@ fn add(a, b) {
 }
 ```
 
-- 函数调用：
+函数调用：
 
 ```txt
 add(1, 2)
 ```
 
-### 递归支持设定
+函数语义：
 
-MiniLang 允许具名函数在自身函数体中引用自己，因此语法上支持递归。例如：
+- 函数在运行时表示为闭包值，保存参数列表、函数体和定义时环境。
+- 具名函数会在闭包环境中自绑定，因此支持递归。
+- 函数调用时使用“闭包环境 + 参数绑定”构造局部环境。
+- 参数绑定会覆盖闭包环境中的同名变量。
+- 函数内部赋值只影响本次调用的局部环境，不回写调用者环境。
+- 函数没有显式 `return` 时返回 `unit`。
+- 顶层 `return` 会返回 `ReturnOutsideFunction`。
+
+### 递归支持
+
+MiniLang 支持具名函数递归。例如：
 
 ```txt
 fn fact(n) {
@@ -71,12 +119,17 @@ fn fact(n) {
 }
 ```
 
-Parser 会把这里的 `fact(n - 1)` 解析成普通调用表达式。  
-真正让“函数名在自身函数体内可见”的规则，需要由 `Eval` 在运行时环境里实现。
+Parser 会把 `fact(n - 1)` 解析成普通调用表达式：
+
+```haskell
+ECall (EVar "fact") [ESub (EVar "n") (EInt 1)]
+```
+
+真正让函数名在函数体内可见的是 Backend 中 `SFun` 的运行时自绑定逻辑。
 
 ### 闭包友好的调用设计
 
-为了方便后续实现闭包和高阶函数，函数调用的 AST 采用：
+函数调用 AST 使用：
 
 ```haskell
 ECall Expr [Expr]
@@ -88,7 +141,7 @@ ECall Expr [Expr]
 ECall String [Expr]
 ```
 
-这意味着被调用对象不再只能是函数名，而可以是任意表达式。这样后续就能自然支持：
+这意味着被调用对象可以是任意表达式，而不只是函数名。因此语言可以自然表示：
 
 ```txt
 f(1)
@@ -96,32 +149,25 @@ outer(10)(20)
 (getFunc())(3)
 ```
 
-这对闭包实现非常重要，因为闭包常常要把函数作为值返回后再调用。
-
-### 字面量与表达式
-
-- 整数
-- 布尔值：`true`、`false`
-- 字符串
-- 变量引用
-- 函数调用
-- 括号表达式
-- 运算：`+ - * / < <= > >= == !=`
-
-### 注释
-
-当前语言支持单行注释：
+当前示例中使用了闭包式函数返回：
 
 ```txt
-// this is a comment
-let x = 1;
+fn makeAdder(base) {
+  fn inner(value) {
+    return base + value;
+  }
+  return inner;
+}
+
+let adder = makeAdder(10);
+let closureResult = adder(5);
 ```
 
-Lexer 会直接跳过 `//` 到该行结尾之间的内容，不会生成任何 token。
+最终 `closureResult` 的值为 `15`。
 
 ## Token 设计
 
-### 关键字
+关键字：
 
 - `let`
 - `fn`
@@ -133,13 +179,13 @@ Lexer 会直接跳过 `//` 到该行结尾之间的内容，不会生成任何 t
 - `true`
 - `false`
 
-### 标识符和字面量
+标识符和字面量：
 
 - `TokIdent String`
 - `TokInt Int`
 - `TokString String`
 
-### 运算符
+运算符：
 
 - `+`
 - `-`
@@ -153,7 +199,7 @@ Lexer 会直接跳过 `//` 到该行结尾之间的内容，不会生成任何 t
 - `<=`
 - `>=`
 
-### 分隔符
+分隔符：
 
 - `(`
 - `)`
@@ -170,91 +216,52 @@ Lexer 会直接跳过 `//` 到该行结尾之间的内容，不会生成任何 t
 lexProgram :: String -> Either LexError [Token]
 ```
 
-词法分析失败时返回：
-
-```haskell
-Left LexError
-```
-
 成功时返回：
 
 ```haskell
 Right [Token]
 ```
 
-### 核心思路
+失败时返回：
 
-`lexProgram` 内部通过递归函数 `go` 扫描输入：
+```haskell
+Left LexError
+```
+
+`lexProgram` 内部通过递归函数扫描输入，同时维护行号和列号：
 
 ```haskell
 go :: Int -> Int -> String -> Either LexError [Token]
 ```
 
-三个参数分别是：
+Lexer 负责：
 
-- 当前行号
-- 当前列号
-- 当前未处理输入
-
-每次只处理当前字符，然后递归处理剩余内容。
-
-### Lexer 负责的主要工作
-
-1. 跳过空格、换行和 tab，并维护行列号
-2. 用 `span` 读取标识符和关键字
-3. 读取整数并构造 `TokInt`
-4. 识别单字符符号，如 `+`、`(`、`;`
-5. 识别双字符运算符，如 `==`、`<=`、`>=`
-6. 处理 `!=`
-7. 处理字符串和转义字符
-8. 识别函数新增关键字 `fn`、`return`
-9. 识别参数分隔符 `,`
-10. 跳过 `//` 单行注释
-
-### 和闭包友好调用相关的 Lexer 说明
-
-把 `ECall` 从 `String` 升级为 `Expr` 之后，Lexer 本身不需要新增 token。  
-也就是说，闭包友好的调用能力主要来自 AST 和 Parser 的升级，词法层仍然沿用这些 token：
-
-- `TokIdent`
-- `TokLParen`
-- `TokRParen`
-- `TokComma`
-
-### Lexer 错误处理
-
-当前 `Lexer` 会检测：
-
-- 非法字符
-- 单独出现的 `!`
-- 字符串未闭合
-- 字符串中直接换行
-- 非法转义
-- 非法十六进制转义
+1. 跳过空格、换行和 tab
+2. 识别标识符和关键字
+3. 读取整数和字符串
+4. 处理字符串转义和十六进制转义
+5. 识别单字符和双字符运算符
+6. 跳过 `//` 单行注释
+7. 在非法字符、非法转义、字符串未闭合等场景返回 `LexError`
 
 ## Parser 如何实现
 
-`Parser` 的目标是把 `[Token]` 转成 AST：
+`Parser` 的目标是把源码解析成 AST：
 
 ```haskell
 parseProgram :: String -> Either ParseError Program
 ```
 
-内部流程是：
-
-1. 先调用 `lexProgram`
-2. 成功后把 `[Token]` 交给真正的语法分析函数
+内部流程：
 
 ```txt
 source -> lexProgram -> [Token] -> parseTokens -> Program
 ```
 
-### 递归下降解析
-
-Parser 采用递归下降写法。每个解析函数都返回两部分：
+Parser 使用递归下降方式。每个解析函数通常返回两个结果：
 
 - 当前解析出的 AST 节点
-- 还没消费完的 token
+- 尚未消费的 token
 
 例如：
 
@@ -267,18 +274,27 @@ parseExpr :: [Token] -> Either ParseError (Expr, [Token])
 整个程序是语句列表：
 
 ```haskell
-Program [Stmt]
+newtype Program = Program [Stmt]
 ```
 
-`parseTokens` 负责把完整 token 序列解析成 `Program`。  
-`parseStmtList` 持续读取语句，直到：
-
-- token 用完
-- 或遇到 `TokRBrace`
+`parseStmtList` 会持续读取语句，直到 token 用完，或遇到右花括号 `TokRBrace`。
 
 ### 单条语句解析
 
-`parseStmt` 当前支持：
+当前支持的语句 AST：
+
+```haskell
+data Stmt
+  = SLet String Expr
+  | SFun String [String] [Stmt]
+  | SReturn Expr
+  | SAssign String Expr
+  | SPrint Expr
+  | SIf Expr [Stmt] [Stmt]
+  | SWhile Expr [Stmt]
+```
+
+对应语法包括：
 
 - `let x = expr;`
 - `x = expr;`
@@ -288,115 +304,41 @@ Program [Stmt]
 - `fn name(params) { ... }`
 - `return expr;`
 
-### 函数定义如何解析
-
-例如：
-
-```txt
-fn add(a, b) {
-  return a + b;
-}
-```
-
-Parser 的处理顺序是：
-
-1. 读到 `TokFn`
-2. 读取函数名
-3. 读取参数列表 `(...)`
-4. 读取函数体 block
-5. 构造：
-
-```haskell
-SFun "add" ["a", "b"] [...]
-```
-
-参数列表由 `parseParamList` 负责，支持：
-
-- 空参数列表：`fn hello() { ... }`
-- 多参数列表：`fn add(a, b, c) { ... }`
-
-### return 如何解析
-
-例如：
-
-```txt
-return a + b;
-```
-
-会被解析成：
-
-```haskell
-SReturn (EAdd (EVar "a") (EVar "b"))
-```
-
 ### 表达式优先级
 
-当前表达式按下面顺序解析：
+表达式按以下优先级解析：
 
-1. `parseEquality`：`==`、`!=`
-2. `parseComparison`：`<`、`<=`、`>`、`>=`
-3. `parseAdditive`：`+`、`-`
-4. `parseMultiplicative`：`*`、`/`
-5. `parsePostfix`：处理函数调用后缀
-6. `parsePrimary`：整数、布尔、字符串、变量、括号表达式
+1. `==`、`!=`
+2. `<`、`<=`、`>`、`>=`
+3. `+`、`-`
+4. `*`、`/`
+5. 函数调用后缀
+6. 整数、布尔、字符串、变量、括号表达式
 
-### 调用表达式如何升级
-
-现在 parser 使用“原子表达式 + 后缀调用”的形式：
-
-1. `parsePrimary` 先解析出一个基础表达式
-2. `parsePostfix` 再检查它后面是否跟着 `(...)`
-3. 如果有，就构造 `ECall expr args`
-4. 然后继续向后看，允许连续调用
-
-因此现在不仅支持：
-
-```txt
-add(x, 8)
-```
-
-也支持：
-
-```txt
-outer(10)(20)
-(f)(x)
-```
-
-对应 AST 会类似：
+表达式 AST：
 
 ```haskell
-ECall (ECall (EVar "outer") [EInt 10]) [EInt 20]
+data Expr
+  = EInt Int
+  | EBool Bool
+  | EString String
+  | EVar String
+  | EAdd Expr Expr
+  | ESub Expr Expr
+  | EMul Expr Expr
+  | EDiv Expr Expr
+  | ELt Expr Expr
+  | ELe Expr Expr
+  | EGt Expr Expr
+  | EGe Expr Expr
+  | EEq Expr Expr
+  | ENeq Expr Expr
+  | ECall Expr [Expr]
 ```
-
-### 递归在 Parser 中的体现
-
-从 parser 角度看，递归并不需要新的特殊语句。  
-例如：
-
-```txt
-fn fact(n) {
-  return fact(n - 1);
-}
-```
-
-这里函数体里的 `fact(n - 1)` 会被正常解析成：
-
-```haskell
-ECall (EVar "fact") [...]
-```
-
-因此递归语法本身已经成立，真正的“自绑定”规则交给 `Eval` 处理。
-
-### 实参列表如何解析
-
-实参列表由 `parseArgumentList` 负责，支持：
-
-- 空实参：`hello()`
-- 多实参：`add(1, 2, 3)`
 
 ### Parser 错误处理
 
-当前 parser 会检测：
+Parser 会检测：
 
 - 语句不完整
 - 表达式不完整
@@ -407,41 +349,75 @@ ECall (EVar "fact") [...]
 - 实参列表格式错误
 - 尾部存在未消费 token
 
-## 当前 AST 结构
+## Backend 如何实现
 
-### Program
+Backend 的核心入口：
 
 ```haskell
-newtype Program = Program [Stmt]
+runProgram :: Program -> Either RuntimeError (Output, Env)
 ```
 
-### 语句类型
+也就是说，Backend 的输入是 Parser 产生的 AST，输出是：
 
-- `SLet String Expr`
-- `SFun String [String] [Stmt]`
-- `SReturn Expr`
-- `SAssign String Expr`
-- `SPrint Expr`
-- `SIf Expr [Stmt] [Stmt]`
-- `SWhile Expr [Stmt]`
+- `Output`：程序中所有 `print` 产生的文本列表
+- `Env`：程序结束后的最终运行时环境
+- `RuntimeError`：解释执行阶段发生的错误
 
-### 表达式类型
+### 运行时值
 
-- `EInt`
-- `EBool`
-- `EString`
-- `EVar`
-- `EAdd`
-- `ESub`
-- `EMul`
-- `EDiv`
-- `ELt`
-- `ELe`
-- `EGt`
-- `EGe`
-- `EEq`
-- `ENeq`
-- `ECall Expr [Expr]`
+```haskell
+type Env = Map.Map String Value
+
+data Value
+  = VInt Int
+  | VBool Bool
+  | VString String
+  | VUnit
+  | VFunction [String] [Stmt] Env
+```
+
+说明：
+
+- `VInt`、`VBool`、`VString` 分别表示整数、布尔值和字符串。
+- `VUnit` 表示没有显式返回值。
+- `VFunction` 表示函数闭包，保存参数、函数体和定义时环境。
+- 函数值显示为 `<function>`，避免递归打印闭包环境。
+- 普通相等比较不允许比较函数值。
+
+### 执行控制流
+
+Backend 内部使用执行信号区分普通执行和函数返回：
+
+```haskell
+data ExecSignal
+  = Continue
+  | Returned Value
+```
+
+`return` 不是普通值绑定，而是控制流信号。这个信号会从嵌套的 `if`、`while` 和语句块中向外传播，直到函数调用边界被消费。
+
+### 运行时错误
+
+当前运行时错误包括：
+
+```haskell
+data RuntimeError
+  = UndefinedVariable String
+  | TypeMismatch String
+  | DivisionByZero
+  | ArityMismatch Int Int
+  | NotCallable String
+  | ReturnOutsideFunction
+```
+
+典型场景：
+
+- 读取未定义变量：`UndefinedVariable`
+- 对非整数做算术：`TypeMismatch`
+- 除以零：`DivisionByZero`
+- 函数参数数量不匹配：`ArityMismatch`
+- 调用非函数值：`NotCallable`
+- 顶层使用 `return`：`ReturnOutsideFunction`
 
 ## 示例输入
 
@@ -451,50 +427,45 @@ newtype Program = Program [Stmt]
 examples/showcase.minilang
 ```
 
-内容如下：
+示例覆盖：
+
+- 变量声明和算术
+- 布尔值和字符串转义
+- 函数定义和调用
+- 递归 factorial
+- 闭包式 `makeAdder`
+- 比较和相等运算
+- `while` 循环
+- `if / else` 控制流
+
+节选：
 
 ```txt
-// Variable declarations and basic arithmetic
-let x = 42;
-let msg = "hello\nworld";
-fn add(a, b) {
-  return a + b;
+fn fact(n) {
+  if (n == 0) {
+    return 1;
+  } else {
+    return n * fact(n - 1);
+  }
 }
 
-let total = add(x, 8);
-print msg;
-print total;
-
-if (x >= 10) {
-  x = x + 1;
-  print "x updated";
-} else {
-  print "x too small";
+fn makeAdder(base) {
+  fn inner(value) {
+    return base + value;
+  }
+  return inner;
 }
+
+let adder = makeAdder(10);
+let closureResult = adder(5);
+let factorial = fact(5);
 ```
 
-## 示例 Parser 输出
+运行后，最终环境中会包含：
 
-这段程序会被解析成类似下面的 AST：
-
-```haskell
-Right
-  ( Program
-      [ SLet "x" (EInt 42)
-      , SLet "msg" (EString "hello\nworld")
-      , SFun "add" ["a", "b"]
-          [ SReturn (EAdd (EVar "a") (EVar "b")) ]
-      , SLet "total" (ECall (EVar "add") [EVar "x", EInt 8])
-      , SPrint (EVar "msg")
-      , SPrint (EVar "total")
-      , SIf
-          (EGe (EVar "x") (EInt 10))
-          [ SAssign "x" (EAdd (EVar "x") (EInt 1))
-          , SPrint (EString "x updated")
-          ]
-          [ SPrint (EString "x too small") ]
-      ]
-  )
+```txt
+closureResult = 15
+factorial = 120
 ```
 
 ## 运行方式
@@ -517,8 +488,50 @@ cabal run MiniLang
 - 打印源代码
 - 打印 Lexer 输出
 - 打印 Parser 输出
-- 打印 Eval 输出和最终环境
+- 执行 AST
+- 打印 Eval 输出
+- 打印最终环境
 
-## 下一步
+## 调试 Backend
 
-现在 `Parsing` 目录负责词法、语法和 AST，`Backend` 目录负责运行时值、错误和解释执行。`Main` 仍作为调试入口串联完整流程。
+可以在 GHCi 中直接构造 AST 并传给 `runProgram`：
+
+```haskell
+import MiniLang.Parsing.Syntax
+import MiniLang.Backend.Eval
+
+runProgram (Program [SLet "x" (EInt 1), SPrint (EVar "x")])
+```
+
+预期返回：
+
+```haskell
+Right (["1"], fromList [("x",1)])
+```
+
+也可以测试错误路径：
+
+```haskell
+runProgram (Program [SPrint (EVar "missing")])
+```
+
+预期返回：
+
+```haskell
+Left (UndefinedVariable "missing")
+```
+
+## 当前状态和后续方向
+
+当前项目已经形成清晰的前后端结构：
+
+- Parsing 层负责源码到 AST。
+- Backend 层负责 AST 到执行结果。
+- Main 层负责把两部分串起来做调试运行。
+
+后续可以继续补充：
+
+- 交互式 REPL
+- 文件路径参数，而不是在 `Main.hs` 中固定读取 showcase
+- 自动化测试框架
+- 更完整的类型系统和错误位置信息
