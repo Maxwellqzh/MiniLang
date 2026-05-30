@@ -3,8 +3,12 @@ module MiniLang.Parsing.Syntax where
 newtype Program = Program [Stmt]
   deriving (Eq, Show)
 
+data ConstructorDef = ConstructorDef String [String]
+  deriving (Eq, Show)
+
 data Stmt
   = SLet String Expr
+  | SData String [ConstructorDef]
   | SFun String [String] [Stmt]
   | SReturn Expr
   | SAssign String Expr
@@ -29,4 +33,12 @@ data Expr
   | EEq Expr Expr
   | ENeq Expr Expr
   | ECall Expr [Expr]
+  | ELambda [String] [Stmt]
+  | EMatch Expr [(Pattern, Expr)]
+  deriving (Eq, Show)
+
+data Pattern
+  = PWildcard
+  | PVar String
+  | PConstructor String [String]
   deriving (Eq, Show)

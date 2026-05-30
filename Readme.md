@@ -24,6 +24,10 @@ MiniLang 当前支持：
 - `return` 从函数体中返回值
 - 递归函数，例如 `fact(n - 1)`
 - 闭包式函数返回和二次调用，例如 `makeAdder(10)(5)` 或先保存为变量再调用
+- 高阶函数：函数可以作为参数传递，也可以作为返回值
+- 匿名函数表达式：`fn(x) { return x + 1; }`
+- 自定义 ADT：`data List { Nil; Cons(head, tail); }`
+- 表达式级模式匹配：`match value { Pattern -> expr; }`
 - 单行注释：`// comment`
 
 ## 项目结构
@@ -45,13 +49,16 @@ app/
 examples/
   sample.minilang
   showcase.minilang
+  higher_order.minilang
+  higher_order_lambda.minilang
+  adt_match.minilang
 ```
 
 主要模块职责：
 
 - `MiniLang.Parsing.Token`：定义词法单元 `Token`
 - `MiniLang.Parsing.Lexer`：把源代码字符串转换成 `[Token]`
-- `MiniLang.Parsing.Syntax`：定义 AST，包含 `Program`、`Stmt`、`Expr`
+- `MiniLang.Parsing.Syntax`：定义 AST，包含 `Program`、`Stmt`、`Expr`、`Pattern`
 - `MiniLang.Parsing.Parser`：把源码解析成 `Program`
 - `MiniLang.Backend.Value`：定义运行时值 `Value` 和环境 `Env`
 - `MiniLang.Backend.Error`：定义解释执行阶段的 `RuntimeError`
@@ -165,11 +172,77 @@ let closureResult = adder(5);
 
 最终 `closureResult` 的值为 `15`。
 
+### 高阶函数和匿名函数
+
+因为函数调用目标已经升级为 `ECall Expr [Expr]`，所以 Parser 端可以表达高阶函数调用：
+
+```txt
+fn applyTwice(f, x) {
+  return f(f(x));
+}
+
+fn addOne(n) {
+  return n + 1;
+}
+
+let result = applyTwice(addOne, 10);
+```
+
+匿名函数表达式使用 `fn(params) { ... }`：
+
+```txt
+let result = apply(fn(n) {
+  return n + 1;
+}, 10);
+```
+
+对应 AST：
+
+```haskell
+ELambda ["n"] [SReturn (EAdd (EVar "n") (EInt 1))]
+```
+
+### ADT 和表达式级 match
+
+Parser 端支持自定义 ADT 声明：
+
+```txt
+data List {
+  Nil;
+  Cons(head, tail);
+}
+```
+
+也支持表达式级 `match`：
+
+```txt
+fn sum(xs) {
+  return match xs {
+    Nil -> 0;
+    Cons(head, tail) -> head + sum(tail);
+  };
+}
+```
+
+语法说明：
+
+- `data TypeName { ... }` 是语句，用来声明一组构造器。
+- 构造器可以没有字段，例如 `Nil;`。
+- 构造器可以带字段名，例如 `Cons(head, tail);`。
+- `match` 是表达式，可以放在 `return`、`let`、`print` 和函数参数等表达式位置。
+- 每个分支格式为 `pattern -> expr;`。
+- `_` 是通配符模式，匹配任意值但不绑定变量。
+- 小写标识符模式会被解析为变量模式，例如 `x`。
+- 大写开头标识符模式会被解析为构造器模式，例如 `Nil` 或 `Cons(head, tail)`。
+- 当前 Parser MVP 暂不支持嵌套模式和字面量模式。
+
 ## Token 设计
 
 关键字：
 
 - `let`
+- `data`
+- `match`
 - `fn`
 - `return`
 - `if`
@@ -189,6 +262,7 @@ let closureResult = adder(5);
 
 - `+`
 - `-`
+- `->`
 - `*`
 - `/`
 - `=`
@@ -207,6 +281,7 @@ let closureResult = adder(5);
 - `}`
 - `;`
 - `,`
+- `_`
 
 ## Lexer 如何实现
 
@@ -241,8 +316,9 @@ Lexer 负责：
 3. 读取整数和字符串
 4. 处理字符串转义和十六进制转义
 5. 识别单字符和双字符运算符
-6. 跳过 `//` 单行注释
-7. 在非法字符、非法转义、字符串未闭合等场景返回 `LexError`
+6. 识别 `->` 作为 match 分支箭头
+7. 跳过 `//` 单行注释
+8. 在非法字符、非法转义、字符串未闭合等场景返回 `LexError`
 
 ## Parser 如何实现
 
@@ -284,8 +360,11 @@ newtype Program = Program [Stmt]
 当前支持的语句 AST：
 
 ```haskell
+data ConstructorDef = ConstructorDef String [String]
+
 data Stmt
   = SLet String Expr
+  | SData String [ConstructorDef]
   | SFun String [String] [Stmt]
   | SReturn Expr
   | SAssign String Expr
@@ -303,6 +382,7 @@ data Stmt
 - `while (expr) { ... }`
 - `fn name(params) { ... }`
 - `return expr;`
+- `data Name { Constructor(...); }`
 
 ### 表达式优先级
 
@@ -313,7 +393,7 @@ data Stmt
 3. `+`、`-`
 4. `*`、`/`
 5. 函数调用后缀
-6. 整数、布尔、字符串、变量、括号表达式
+6. 整数、布尔、字符串、变量、匿名函数、`match`、括号表达式
 
 表达式 AST：
 
@@ -334,6 +414,17 @@ data Expr
   | EEq Expr Expr
   | ENeq Expr Expr
   | ECall Expr [Expr]
+  | ELambda [String] [Stmt]
+  | EMatch Expr [(Pattern, Expr)]
+```
+
+模式 AST：
+
+```haskell
+data Pattern
+  = PWildcard
+  | PVar String
+  | PConstructor String [String]
 ```
 
 ### Parser 错误处理
@@ -347,6 +438,9 @@ Parser 会检测：
 - 缺少右花括号
 - 参数列表格式错误
 - 实参列表格式错误
+- data 构造器声明格式错误
+- match 分支格式错误
+- pattern 格式错误
 - 尾部存在未消费 token
 
 ## Backend 如何实现
@@ -419,6 +513,15 @@ data RuntimeError
 - 调用非函数值：`NotCallable`
 - 顶层使用 `return`：`ReturnOutsideFunction`
 
+### Backend TODO
+
+- 支持匿名函数 `ELambda` 的求值和调用。
+- 支持 `data` 声明生成可用构造器。
+- 支持构造器调用生成 ADT 值。
+- 支持 `match` 根据模式选择分支并返回表达式结果。
+- 支持构造器模式字段绑定和 `_` 通配符。
+- 为构造器参数错误、未知构造器、match 无匹配分支等情况返回清晰运行时错误。
+
 ## 示例输入
 
 综合示例文件位于：
@@ -437,6 +540,12 @@ examples/showcase.minilang
 - 比较和相等运算
 - `while` 循环
 - `if / else` 控制流
+
+额外 Parser 示例：
+
+- `examples/higher_order.minilang`：高阶函数
+- `examples/higher_order_lambda.minilang`：匿名函数表达式
+- `examples/adt_match.minilang`：ADT 和表达式级 match
 
 节选：
 

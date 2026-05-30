@@ -1,5 +1,6 @@
 module MiniLang.Parsing.Parser where
 
+import Data.Char (isUpper)
 import MiniLang.Parsing.Lexer (lexProgram)
 import MiniLang.Parsing.Syntax
 import MiniLang.Parsing.Token
@@ -33,6 +34,9 @@ parseStmtList tokens =
 parseStmt :: [Token] -> Either ParseError (Stmt, [Token])
 parseStmt tokens =
   case tokens of
+    TokData : TokIdent name : TokLBrace : rest -> do
+      (constructors, rest1) <- parseConstructorDefs rest
+      Right (SData name constructors, rest1)
     TokFn : TokIdent name : TokLParen : rest -> do
       (params, rest1) <- parseParamList rest
       (body, rest2) <- parseBlock rest1
@@ -95,6 +99,22 @@ parseParamList tokens =
         TokRParen : rest -> Right (params, rest)
         TokComma : _ -> Left (ParseError "expected parameter name after ','")
         _ -> Left (ParseError "expected ',' or ')' in parameter list")
+
+parseConstructorDefs :: [Token] -> Either ParseError ([ConstructorDef], [Token])
+parseConstructorDefs tokens =
+  case tokens of
+    TokRBrace : rest -> Right ([], rest)
+    TokIdent name : TokLParen : rest -> do
+      (fields, rest1) <- parseParamList rest
+      rest2 <- expect TokSemicolon rest1
+      (constructors, rest3) <- parseConstructorDefs rest2
+      Right (ConstructorDef name fields : constructors, rest3)
+    TokIdent name : rest -> do
+      rest1 <- expect TokSemicolon rest
+      (constructors, rest2) <- parseConstructorDefs rest1
+      Right (ConstructorDef name [] : constructors, rest2)
+    [] -> Left (ParseError "unexpected end of input while parsing data declaration")
+    token : _ -> Left (ParseError ("unexpected token in data declaration: " ++ show token))
 
 parseExpr :: [Token] -> Either ParseError (Expr, [Token])
 parseExpr = parseEquality
@@ -177,6 +197,15 @@ parseCallSuffix callee tokens =
 parsePrimary :: [Token] -> Either ParseError (Expr, [Token])
 parsePrimary tokens =
   case tokens of
+    TokMatch : rest -> do
+      (scrutinee, rest1) <- parseExpr rest
+      rest2 <- expect TokLBrace rest1
+      (branches, rest3) <- parseMatchBranches rest2
+      Right (EMatch scrutinee branches, rest3)
+    TokFn : TokLParen : rest -> do
+      (params, rest1) <- parseParamList rest
+      (body, rest2) <- parseBlock rest1
+      Right (ELambda params body, rest2)
     TokInt n : rest -> Right (EInt n, rest)
     TokString s : rest -> Right (EString s, rest)
     TokTrue : rest -> Right (EBool True, rest)
@@ -188,6 +217,52 @@ parsePrimary tokens =
       Right (expr, rest2)
     [] -> Left (ParseError "unexpected end of input while parsing expression")
     token : _ -> Left (ParseError ("unexpected token while parsing expression: " ++ show token))
+
+parseMatchBranches :: [Token] -> Either ParseError ([(Pattern, Expr)], [Token])
+parseMatchBranches tokens =
+  case tokens of
+    TokRBrace : rest -> Right ([], rest)
+    [] -> Left (ParseError "unexpected end of input while parsing match expression")
+    _ -> do
+      (pattern_, rest) <- parsePattern tokens
+      rest1 <- expect TokArrow rest
+      (expr, rest2) <- parseExpr rest1
+      rest3 <- expect TokSemicolon rest2
+      (branches, rest4) <- parseMatchBranches rest3
+      Right ((pattern_, expr) : branches, rest4)
+
+parsePattern :: [Token] -> Either ParseError (Pattern, [Token])
+parsePattern tokens =
+  case tokens of
+    TokUnderscore : rest -> Right (PWildcard, rest)
+    TokIdent name : TokLParen : rest -> do
+      (fields, rest1) <- parsePatternVarList rest
+      Right (PConstructor name fields, rest1)
+    TokIdent name : rest
+      | isConstructorName name -> Right (PConstructor name [], rest)
+      | otherwise -> Right (PVar name, rest)
+    token : _ -> Left (ParseError ("unexpected token while parsing pattern: " ++ show token))
+    [] -> Left (ParseError "unexpected end of input while parsing pattern")
+
+parsePatternVarList :: [Token] -> Either ParseError ([String], [Token])
+parsePatternVarList tokens =
+  case tokens of
+    TokRParen : rest -> Right ([], rest)
+    TokIdent name : rest -> parsePatternVarListTail [name] rest
+    _ -> Left (ParseError "expected pattern variable name or ')' in constructor pattern")
+  where
+    parsePatternVarListTail names tokens' =
+      case tokens' of
+        TokComma : TokIdent name : rest -> parsePatternVarListTail (names ++ [name]) rest
+        TokRParen : rest -> Right (names, rest)
+        TokComma : _ -> Left (ParseError "expected pattern variable name after ','")
+        _ -> Left (ParseError "expected ',' or ')' in constructor pattern")
+
+isConstructorName :: String -> Bool
+isConstructorName name =
+  case name of
+    c : _ -> isUpper c
+    [] -> False
 
 parseArgumentList :: [Token] -> Either ParseError ([Expr], [Token])
 parseArgumentList tokens =

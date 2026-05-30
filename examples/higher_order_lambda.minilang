@@ -1,0 +1,16 @@
+// Parser-only higher-order function test.
+// This demonstrates anonymous function expressions:
+// fn(x) { return x + 1; }
+//
+// Eval can support this by evaluating ELambda into a closure value
+// that captures the current environment.
+
+fn apply(f, x) {
+  return f(x);
+}
+
+let result = apply(fn(n) {
+  return n + 1;
+}, 10);
+
+print result;

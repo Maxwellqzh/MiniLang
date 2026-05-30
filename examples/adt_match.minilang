@@ -1,0 +1,36 @@
+// Parser-only ADT + expression match test.
+// Eval can support this by registering constructors from data declarations
+// and evaluating match branches from top to bottom.
+
+data List {
+  Nil;
+  Cons(head, tail);
+}
+
+data Maybe {
+  None;
+  Some(value);
+}
+
+fn sum(xs) {
+  return match xs {
+    Nil -> 0;
+    Cons(head, tail) -> head + sum(tail);
+  };
+}
+
+fn defaultValue(value) {
+  return match value {
+    Some(inner) -> inner;
+    _ -> 0;
+  };
+}
+
+let xs = Cons(1, Cons(2, Cons(3, Nil)));
+let total = sum(xs);
+let maybeNumber = Some(total);
+let fallback = defaultValue(None);
+
+print total;
+print defaultValue(maybeNumber);
+print fallback;
