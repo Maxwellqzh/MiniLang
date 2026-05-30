@@ -2,6 +2,8 @@ module MiniLang.Parsing.Token where
 
 data Token
   = TokLet
+  | TokData
+  | TokMatch
   | TokFn
   | TokReturn
   | TokIf
@@ -18,6 +20,7 @@ data Token
 
   | TokPlus       -- +
   | TokMinus      -- -
+  | TokArrow      -- ->
   | TokStar       -- *
   | TokSlash      -- /
 
@@ -35,5 +38,6 @@ data Token
   | TokRBrace     -- }
   | TokSemicolon  -- ;
   | TokComma      -- ,
+  | TokUnderscore -- _
 
   deriving (Eq, Show)

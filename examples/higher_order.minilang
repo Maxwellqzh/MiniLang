@@ -1,0 +1,24 @@
+// Executable higher-order function test.
+// This file only uses named functions, so the current Backend can run it.
+
+fn applyTwice(f, x) {
+  return f(f(x));
+}
+
+fn addOne(n) {
+  return n + 1;
+}
+
+fn makeAdder(base) {
+  fn inner(value) {
+    return base + value;
+  }
+  return inner;
+}
+
+let result = applyTwice(addOne, 10);
+let addTen = makeAdder(10);
+let closureResult = addTen(5);
+
+print result;
+print closureResult;

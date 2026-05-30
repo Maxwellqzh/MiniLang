@@ -1,0 +1,1 @@
+Right (Program [SFun "apply" ["f","x"] [SReturn (ECall (EVar "f") [EVar "x"])],SLet "result" (ECall (EVar "apply") [ELambda ["n"] [SReturn (EAdd (EVar "n") (EInt 1))],EInt 10]),SPrint (EVar "result")])

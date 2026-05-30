@@ -47,7 +47,7 @@ lexProgram = go 1 1
               case c of
                 '"' -> lexString line column cs
                 '+' -> single cs TokPlus
-                '-' -> single cs TokMinus
+                '-' -> double cs '>' TokArrow TokMinus
                 '*' -> single cs TokStar
                 '/' -> single cs TokSlash
                 '(' -> single cs TokLParen
@@ -179,6 +179,8 @@ lexProgram = go 1 1
     keywordOrIdent name =
       case name of
         "let" -> TokLet
+        "data" -> TokData
+        "match" -> TokMatch
         "fn" -> TokFn
         "return" -> TokReturn
         "if" -> TokIf
@@ -187,6 +189,7 @@ lexProgram = go 1 1
         "print" -> TokPrint
         "true" -> TokTrue
         "false" -> TokFalse
+        "_" -> TokUnderscore
         _ -> TokIdent name
 
     advance :: Char -> Int -> Int -> (Int, Int)
