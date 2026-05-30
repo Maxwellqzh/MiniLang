@@ -12,8 +12,11 @@ data ExecSignal
   | Returned Value
 
 runProgram :: Program -> Either RuntimeError (Output, Env)
-runProgram (Program stmts) = do
-  (signal, env, output) <- execBlock False Map.empty [] stmts
+runProgram = runProgramWithEnv Map.empty
+
+runProgramWithEnv :: Env -> Program -> Either RuntimeError (Output, Env)
+runProgramWithEnv initialEnv (Program stmts) = do
+  (signal, env, output) <- execBlock False initialEnv [] stmts
   case signal of
     Continue -> Right (output, env)
     Returned _ -> Left ReturnOutsideFunction

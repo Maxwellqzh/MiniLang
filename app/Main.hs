@@ -1,14 +1,24 @@
 module Main where
 
 import MiniLang.Backend.Eval (runProgram)
+import MiniLang.Repl (repl)
 import MiniLang.Parsing.Lexer (lexProgram)
 import MiniLang.Parsing.Parser (parseProgram)
+import System.Environment (getArgs)
 
 main :: IO ()
 main = do
-  let sampleFile = "examples/showcase.minilang"
-  source <- readFile sampleFile
+  args <- getArgs
+  case args of
+    [] -> runFile "examples/showcase.minilang"
+    ["repl"] -> repl
+    ["--repl"] -> repl
+    [sampleFile] -> runFile sampleFile
+    _ -> putStrLn "Usage: MiniLang [repl|--repl|FILE]"
 
+runFile :: FilePath -> IO ()
+runFile sampleFile = do
+  source <- readFile sampleFile
   putStrLn ("Source file: " ++ sampleFile)
   putStrLn ""
   putStrLn "=== Source ==="
