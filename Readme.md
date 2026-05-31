@@ -1,14 +1,15 @@
 # MiniLang
 
-MiniLang 是一个用 Haskell 实现的迷你语言解释器项目。当前代码已经从单纯的词法/语法分析扩展到完整的解释执行流程，并按功能拆成 `Parsing` 和 `Backend` 两部分：
+MiniLang 是一个用 Haskell 实现的迷你语言解释器项目。当前代码已经从单纯的词法/语法分析扩展到完整的解释执行流程，并按功能拆成 `Parsing`、`TypeCheck` 和 `Backend` 三部分：
 
 - `Parsing`：负责把源代码转换成 AST。
+- `TypeCheck`：负责在执行前检查 AST 的静态类型。
 - `Backend`：负责接收 AST，解释执行并输出结果。
 
 当前完整流程：
 
 ```txt
-source code -> Lexer -> [Token] -> Parser -> Program AST -> Eval -> Output + Env
+source code -> Lexer -> [Token] -> Parser -> Program AST -> TypeCheck -> Eval -> Output + Env
 ```
 
 在 `eval-dev` 分支中，原 README 里列出的 Backend TODO 已经补齐了一部分运行时支持，主要包括浮点数、匿名函数、ADT 构造器和表达式级 `match` 的解释执行，并新增了对应测试。
@@ -27,13 +28,13 @@ cabal build exe:MiniLang
 cabal run exe:MiniLang
 ```
 
-运行指定文件，只输出程序中的 `print` 结果：
+运行指定文件，先做类型检查，再输出程序中的 `print` 结果：
 
 ```bash
 cabal run exe:MiniLang -- examples/showcase.minilang
 ```
 
-输出 Source、Lexer、Parser、Eval 和 Final Env：
+输出 Source、Lexer、Parser、TypeCheck、Eval 和 Final Env：
 
 ```bash
 cabal run exe:MiniLang -- --debug examples/showcase.minilang
@@ -57,7 +58,7 @@ cabal run exe:MiniLang -- --ast examples/adt_match.minilang
 cabal run exe:MiniLang -- repl
 ```
 
-REPL 会在多次输入之间持久维护环境。输入一段或多段 MiniLang 语句后，用空行提交执行；可用 `:env` 查看当前环境，`:reset` 清空环境，`:q` 或 `:quit` 退出。
+REPL 会在多次输入之间持久维护运行时环境和类型环境。输入一段或多段 MiniLang 语句后，用空行提交执行；可用 `:env` 查看当前环境，`:reset` 清空环境，`:q` 或 `:quit` 退出。
 
 运行测试：
 
@@ -94,6 +95,10 @@ app/
       Value.hs
       Error.hs
       Eval.hs
+    Typecheck/
+      Type.hs
+      Error.hs
+      Checker.hs
 examples/
   sample.minilang
   showcase.minilang
@@ -115,8 +120,11 @@ PROJECT_STRUCTURE_CHANGES.md
 - `MiniLang.Backend.Value`：定义运行时值 `Value` 和环境 `Env`
 - `MiniLang.Backend.Error`：定义解释执行阶段的 `RuntimeError`
 - `MiniLang.Backend.Eval`：解释执行 AST，入口是 `runProgram`
-- `Main.hs`：调试入口，串联 Lexer、Parser 和 Eval
-- `MiniLang.Repl`：交互式 REPL，支持跨输入持久维护环境
+- `MiniLang.Typecheck.Type`：定义静态类型和类型环境
+- `MiniLang.Typecheck.Error`：定义静态类型检查错误
+- `MiniLang.Typecheck.Checker`：在执行前完成类型检查
+- `Main.hs`：调试入口，串联 Lexer、Parser、TypeCheck 和 Eval
+- `MiniLang.Repl`：交互式 REPL，支持跨输入持久维护运行时环境和类型环境
 - `test/TestMain.hs`：自动化测试入口，覆盖本次补齐的 Backend 行为
 - `PROJECT_STRUCTURE_CHANGES.md`：记录本次目录结构和工程文件变化
 
@@ -563,6 +571,70 @@ data RuntimeError
 
 仍可继续完善的方向包括：嵌套模式、字面量模式、更完整的错误位置信息和更系统的类型检查。
 
+## TypeCheck 如何实现
+
+TypeCheck 位于 Parser 和 Backend 之间：
+
+```haskell
+typecheckProgram :: TypeEnv -> Program -> Either TypeError TypeEnv
+```
+
+`TypeEnv` 记录当前作用域里的变量、函数和构造器类型。文件运行时从 `emptyTypeEnv` 开始；REPL 会把上一轮保存的运行时环境和类型环境一起传给下一轮，因此状态可以连续累积。
+
+当前这个类型检查器是单态、流敏感的实用版实现，支持：
+
+- `Int`、`Float`、`Bool`、`String`、`Unit`
+- 函数类型和高阶函数
+- `data` 构造器和 `match`
+- `let` 和赋值语句的类型一致性
+- `if` / `while` 条件必须是 `Bool`
+- 函数调用参数数量和参数类型检查
+- `return` 只能出现在函数体内
+- 函数体中所有返回路径的类型统一
+- 数值运算和比较的静态约束
+
+其中最关键的一个修复是赋值语句：`x = expr;` 现在不会把 `x` 的旧类型直接覆盖掉，而是先取出原类型，再和新表达式类型做统一，避免 REPL 里静默变型。
+
+实现文件主要是：
+
+- `app/MiniLang/Typecheck/Type.hs`
+- `app/MiniLang/Typecheck/Error.hs`
+- `app/MiniLang/Typecheck/Checker.hs`
+
+测试里也加了几条对应的 smoke case，覆盖赋值类型稳定性、混合数值比较和 ADT / `match` 的静态通过路径。
+
+## REPL 如何实现
+
+REPL 入口位于 `MiniLang.Repl`。它维护的是一个显式状态：
+
+```haskell
+data ReplState = ReplState
+  { replRuntimeEnv :: Env
+  , replTypeEnv :: TypeEnv
+  }
+```
+
+每轮循环大致是：
+
+1. 读取输入。空行提交当前块。
+2. 调用 `parseProgram` 解析成 AST。
+3. 用上一轮保存的 `replTypeEnv` 调 `typecheckProgram`。
+4. 类型通过后，用上一轮保存的 `replRuntimeEnv` 调 `runProgramWithEnv`。
+5. 只有执行成功时，才提交新的运行时环境和类型环境。
+6. 解析失败、类型检查失败或运行时失败时，保留旧状态继续会话。
+
+支持的命令有：
+
+- `:help`
+- `:env`
+- `:reset`
+- `:q`
+- `:quit`
+
+`:` 命令只在当前输入块为空时识别。`:env` 只打印当前运行时环境；`:reset` 会把运行时环境和类型环境一起清空。
+
+REPL 的核心价值是可以在同一会话里连续定义变量、函数和 ADT，并让后续输入沿用前面的静态和运行时状态。
+
 ## 示例输入
 
 综合示例文件位于：
@@ -667,14 +739,15 @@ Left (UndefinedVariable "missing")
 当前项目已经形成清晰的前后端结构：
 
 - Parsing 层负责源码到 AST。
+- TypeCheck 层负责执行前的静态类型检查。
 - Backend 层负责 AST 到执行结果。
-- Main 层负责把两部分串起来做调试运行。
+- Main 层负责把三部分串起来做调试运行。
 - Test 层负责覆盖关键解释执行路径。
 
 后续可以继续补充：
 
 - 更完整的错误位置信息
-- 静态类型检查
+- 更完整的类型系统，例如 let-polymorphism、泛型 ADT、模式穷尽性检查和错误位置信息
 - 嵌套模式和字面量模式
 - 更多标准库函数
 - 更细粒度的 CLI/REPL 自动化测试
