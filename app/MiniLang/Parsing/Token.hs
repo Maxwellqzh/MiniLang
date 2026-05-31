@@ -16,6 +16,7 @@ data Token
 
   | TokIdent String
   | TokInt Int
+  | TokFloat Double
   | TokString String
 
   | TokPlus       -- +
