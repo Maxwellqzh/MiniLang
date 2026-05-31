@@ -1,5 +1,6 @@
 module MiniLang.Backend.Eval where
 
+import Data.Char (isUpper)
 import qualified Data.Map as Map
 import MiniLang.Backend.Error
 import MiniLang.Backend.Value
@@ -38,6 +39,8 @@ execStmt allowReturn env output stmt =
     SLet name expr -> do
       (value, nextOutput) <- evalExpr env output expr
       Right (Continue, Map.insert name value env, nextOutput)
+    SData _ constructors ->
+      Right (Continue, registerConstructors constructors env, output)
     SFun name params body ->
       -- Haskell's lazy binding lets the closure environment contain the
       -- function itself, which gives named functions recursive visibility.
@@ -82,15 +85,16 @@ evalExpr :: Env -> Output -> Expr -> Either RuntimeError (Value, Output)
 evalExpr env output expr =
   case expr of
     EInt value -> Right (VInt value, output)
+    EFloat value -> Right (VFloat value, output)
     EBool value -> Right (VBool value, output)
     EString value -> Right (VString value, output)
     EVar name ->
       case Map.lookup name env of
         Just value -> Right (value, output)
         Nothing -> Left (UndefinedVariable name)
-    EAdd left right -> evalIntBinary "+" (+) env output left right
-    ESub left right -> evalIntBinary "-" (-) env output left right
-    EMul left right -> evalIntBinary "*" (*) env output left right
+    EAdd left right -> evalIntBinary "+" (+) (+) env output left right
+    ESub left right -> evalIntBinary "-" (-) (-) env output left right
+    EMul left right -> evalIntBinary "*" (*) (*) env output left right
     EDiv left right -> evalDiv env output left right
     ELt left right -> evalIntComparison "<" (<) env output left right
     ELe left right -> evalIntComparison "<=" (<=) env output left right
@@ -98,10 +102,33 @@ evalExpr env output expr =
     EGe left right -> evalIntComparison ">=" (>=) env output left right
     EEq left right -> evalEquality True env output left right
     ENeq left right -> evalEquality False env output left right
+    ECall (EVar name) args -> do
+      case Map.lookup name env of
+        Nothing
+          | isConstructorName name -> Left (UnknownConstructor name)
+          | otherwise -> Left (UndefinedVariable name)
+        Just calleeValue -> do
+          (argValues, argsOutput) <- evalArgs env output args
+          callValue calleeValue argValues argsOutput
     ECall callee args -> do
       (calleeValue, calleeOutput) <- evalExpr env output callee
       (argValues, argsOutput) <- evalArgs env calleeOutput args
       callValue calleeValue argValues argsOutput
+    ELambda params body -> Right (VFunction params body env, output)
+    EMatch scrutinee branches -> do
+      (scrutineeValue, scrutineeOutput) <- evalExpr env output scrutinee
+      evalMatch env scrutineeOutput scrutineeValue branches
+
+registerConstructors :: [ConstructorDef] -> Env -> Env
+registerConstructors constructors env =
+  foldl register env constructors
+  where
+    register currentEnv (ConstructorDef name fields) =
+      let value =
+            case fields of
+              [] -> VConstructor name []
+              _ -> VConstructorFunction name (length fields)
+       in Map.insert name value currentEnv
 
 evalArgs :: Env -> Output -> [Expr] -> Either RuntimeError ([Value], Output)
 evalArgs env output args =
@@ -127,15 +154,55 @@ callValue callee args output =
           case signal of
             Continue -> Right (VUnit, finalOutput)
             Returned value -> Right (value, finalOutput)
+    VConstructorFunction name arity ->
+      if length args == arity
+        then Right (VConstructor name args, output)
+        else Left (ConstructorArityMismatch name arity (length args))
     _ -> Left (NotCallable (show callee))
 
-evalIntBinary :: String -> (Int -> Int -> Int) -> Env -> Output -> Expr -> Expr -> Either RuntimeError (Value, Output)
-evalIntBinary op fn env output left right = do
+evalMatch :: Env -> Output -> Value -> [(Pattern, Expr)] -> Either RuntimeError (Value, Output)
+evalMatch env output scrutinee branches =
+  case branches of
+    [] -> Left MatchFailure
+    (pattern_, expr) : rest -> do
+      matchResult <- matchPattern pattern_ scrutinee
+      case matchResult of
+        Nothing -> evalMatch env output scrutinee rest
+        Just bindings -> evalExpr (bindings `Map.union` env) output expr
+
+matchPattern :: Pattern -> Value -> Either RuntimeError (Maybe Env)
+matchPattern pattern_ value =
+  case pattern_ of
+    PWildcard -> Right (Just Map.empty)
+    PVar name -> Right (Just (Map.singleton name value))
+    PConstructor name fields ->
+      case value of
+        VConstructor valueName values
+          | name /= valueName -> Right Nothing
+          | length fields == length values -> Right (Just (Map.fromList (zip fields values)))
+          | otherwise ->
+              Left
+                ( InvalidPattern
+                    ( "constructor pattern "
+                        ++ name
+                        ++ " expects "
+                        ++ show (length values)
+                        ++ " fields, got "
+                        ++ show (length fields)
+                    )
+                )
+        _ -> Right Nothing
+
+evalIntBinary :: String -> (Int -> Int -> Int) -> (Double -> Double -> Double) -> Env -> Output -> Expr -> Expr -> Either RuntimeError (Value, Output)
+evalIntBinary op intFn floatFn env output left right = do
   (leftValue, leftOutput) <- evalExpr env output left
   (rightValue, rightOutput) <- evalExpr env leftOutput right
   case (leftValue, rightValue) of
-    (VInt leftInt, VInt rightInt) -> Right (VInt (fn leftInt rightInt), rightOutput)
-    _ -> Left (TypeMismatch ("operator " ++ op ++ " expects integer operands"))
+    (VInt leftInt, VInt rightInt) -> Right (VInt (intFn leftInt rightInt), rightOutput)
+    (leftNumber, rightNumber) ->
+      case (toDouble leftNumber, toDouble rightNumber) of
+        (Just leftFloat, Just rightFloat) -> Right (VFloat (floatFn leftFloat rightFloat), rightOutput)
+        _ -> Left (TypeMismatch ("operator " ++ op ++ " expects numeric operands"))
 
 evalDiv :: Env -> Output -> Expr -> Expr -> Either RuntimeError (Value, Output)
 evalDiv env output left right = do
@@ -144,15 +211,19 @@ evalDiv env output left right = do
   case (leftValue, rightValue) of
     (VInt _, VInt 0) -> Left DivisionByZero
     (VInt leftInt, VInt rightInt) -> Right (VInt (leftInt `div` rightInt), rightOutput)
-    _ -> Left (TypeMismatch "operator / expects integer operands")
+    (leftNumber, rightNumber) ->
+      case (toDouble leftNumber, toDouble rightNumber) of
+        (Just _, Just 0.0) -> Left DivisionByZero
+        (Just leftFloat, Just rightFloat) -> Right (VFloat (leftFloat / rightFloat), rightOutput)
+        _ -> Left (TypeMismatch "operator / expects numeric operands")
 
-evalIntComparison :: String -> (Int -> Int -> Bool) -> Env -> Output -> Expr -> Expr -> Either RuntimeError (Value, Output)
+evalIntComparison :: String -> (Double -> Double -> Bool) -> Env -> Output -> Expr -> Expr -> Either RuntimeError (Value, Output)
 evalIntComparison op fn env output left right = do
   (leftValue, leftOutput) <- evalExpr env output left
   (rightValue, rightOutput) <- evalExpr env leftOutput right
-  case (leftValue, rightValue) of
-    (VInt leftInt, VInt rightInt) -> Right (VBool (fn leftInt rightInt), rightOutput)
-    _ -> Left (TypeMismatch ("operator " ++ op ++ " expects integer operands"))
+  case (toDouble leftValue, toDouble rightValue) of
+    (Just leftNumber, Just rightNumber) -> Right (VBool (fn leftNumber rightNumber), rightOutput)
+    _ -> Left (TypeMismatch ("operator " ++ op ++ " expects numeric operands"))
 
 evalEquality :: Bool -> Env -> Output -> Expr -> Expr -> Either RuntimeError (Value, Output)
 evalEquality expectEqual env output left right = do
@@ -161,19 +232,40 @@ evalEquality expectEqual env output left right = do
   case (leftValue, rightValue) of
     (VFunction {}, _) -> Left (TypeMismatch "function values cannot be compared")
     (_, VFunction {}) -> Left (TypeMismatch "function values cannot be compared")
+    (VConstructorFunction {}, _) -> Left (TypeMismatch "constructor functions cannot be compared")
+    (_, VConstructorFunction {}) -> Left (TypeMismatch "constructor functions cannot be compared")
     _ ->
-      let result =
-            if expectEqual
-              then leftValue == rightValue
-              else leftValue /= rightValue
-       in Right (VBool result, rightOutput)
+      let areEqual = numericOrValueEqual leftValue rightValue
+       in Right (VBool (if expectEqual then areEqual else not areEqual), rightOutput)
+
+toDouble :: Value -> Maybe Double
+toDouble value =
+  case value of
+    VInt number -> Just (fromIntegral number)
+    VFloat number -> Just number
+    _ -> Nothing
+
+numericOrValueEqual :: Value -> Value -> Bool
+numericOrValueEqual left right =
+  case (toDouble left, toDouble right) of
+    (Just leftNumber, Just rightNumber) -> leftNumber == rightNumber
+    _ -> left == right
+
+isConstructorName :: String -> Bool
+isConstructorName name =
+  case name of
+    c : _ -> isUpper c
+    [] -> False
 
 renderValue :: Value -> String
 renderValue value =
   case value of
     VString text -> text
     VInt number -> show number
+    VFloat number -> show number
     VBool True -> "true"
     VBool False -> "false"
     VUnit -> "unit"
     VFunction {} -> "<function>"
+    VConstructor name values -> show (VConstructor name values)
+    VConstructorFunction name arity -> show (VConstructorFunction name arity)
