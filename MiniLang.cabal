@@ -35,7 +35,7 @@ license:            BSD-3-Clause
 license-file:       LICENSE
 
 -- The package author(s).
-author:             Qzh-Lxr
+author:             Qzh-Lxr-Cyk
 
 -- An email address to which users can send suggestions, bug reports, and patches.
 maintainer:         qzh911699@gmail.com
@@ -65,6 +65,9 @@ executable MiniLang
         MiniLang.Backend.Eval
         MiniLang.Backend.Value
         MiniLang.Backend.Error
+        MiniLang.Typecheck.Type
+        MiniLang.Typecheck.Error
+        MiniLang.Typecheck.Checker
         MiniLang.Repl
     build-depends:
         base >=4.14 && <5,
@@ -83,6 +86,9 @@ test-suite MiniLang-test
         MiniLang.Backend.Eval
         MiniLang.Backend.Value
         MiniLang.Backend.Error
+        MiniLang.Typecheck.Type
+        MiniLang.Typecheck.Error
+        MiniLang.Typecheck.Checker
         MiniLang.Repl
     build-depends:
         base >=4.14 && <5,

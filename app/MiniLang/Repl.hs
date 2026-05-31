@@ -6,8 +6,15 @@ import qualified Data.Map as Map
 import MiniLang.Backend.Eval (runProgramWithEnv)
 import MiniLang.Backend.Value (Env)
 import MiniLang.Parsing.Parser (parseProgram)
+import MiniLang.Typecheck.Checker (typecheckProgram)
+import MiniLang.Typecheck.Type (TypeEnv, emptyTypeEnv)
 import System.IO (hFlush, stdout)
 import System.IO.Error (isEOFError)
+
+data ReplState = ReplState
+  { replRuntimeEnv :: Env
+  , replTypeEnv :: TypeEnv
+  }
 
 data ReplInput
   = ReplEOF
@@ -17,51 +24,56 @@ data ReplInput
 repl :: IO ()
 repl = do
   putStrLn "MiniLang REPL. Type :help for help."
-  loop Map.empty
+  loop (ReplState Map.empty emptyTypeEnv)
 
-loop :: Env -> IO ()
-loop env = do
+loop :: ReplState -> IO ()
+loop state = do
   input <- readReplInput
   case input of
     ReplEOF ->
       putStrLn ""
     ReplCommand command ->
-      handleCommand env command
+      handleCommand state command
     ReplSource source ->
-      runSource env source
+      runSource state source
 
-handleCommand :: Env -> String -> IO ()
-handleCommand env command =
+handleCommand :: ReplState -> String -> IO ()
+handleCommand state command =
   case command of
     ":q" -> pure ()
     ":quit" -> pure ()
     ":help" -> do
       printHelp
-      loop env
+      loop state
     ":env" -> do
-      print env
-      loop env
+      print (replRuntimeEnv state)
+      loop state
     ":reset" -> do
       putStrLn "Environment cleared."
-      loop Map.empty
+      loop (ReplState Map.empty emptyTypeEnv)
     _ -> do
       putStrLn ("Unknown REPL command: " ++ command)
-      loop env
+      loop state
 
-runSource :: Env -> String -> IO ()
-runSource env source =
+runSource :: ReplState -> String -> IO ()
+runSource state source =
   case parseProgram source of
     Left err -> do
       putStrLn ("Parse error: " ++ show err)
-      loop env
+      loop state
     Right program ->
-      case runProgramWithEnv env program of
+      case typecheckProgram (replTypeEnv state) program of
         Left err -> do
-          putStrLn ("Runtime error: " ++ show err)
-          loop env
-        Right (output, nextEnv) -> do
-          mapM_ putStrLn output
-          loop nextEnv
+          putStrLn ("Type error: " ++ show err)
+          loop state
+        Right nextTypeEnv ->
+          case runProgramWithEnv (replRuntimeEnv state) program of
+            Left err -> do
+              putStrLn ("Runtime error: " ++ show err)
+              loop state
+            Right (output, nextRuntimeEnv) -> do
+              mapM_ putStrLn output
+              loop (ReplState nextRuntimeEnv nextTypeEnv)
 
 readReplInput :: IO ReplInput
 readReplInput = collect True []

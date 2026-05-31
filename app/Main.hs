@@ -4,6 +4,8 @@ import MiniLang.Backend.Eval (runProgram)
 import MiniLang.Repl (repl)
 import MiniLang.Parsing.Lexer (lexProgram)
 import MiniLang.Parsing.Parser (parseProgram)
+import MiniLang.Typecheck.Checker (typecheckProgram)
+import MiniLang.Typecheck.Type (emptyTypeEnv)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 
@@ -63,9 +65,12 @@ runProgramOnly source =
   case parseProgram source of
     Left err -> failWith (show err)
     Right program ->
-      case runProgram program of
+      case typecheckProgram emptyTypeEnv program of
         Left err -> failWith (show err)
-        Right (output, _env) -> mapM_ putStrLn output
+        Right _ ->
+          case runProgram program of
+            Left err -> failWith (show err)
+            Right (output, _env) -> mapM_ putStrLn output
 
 printTokens :: String -> IO ()
 printTokens source =
@@ -96,13 +101,18 @@ runDebug sourceFile source = do
         Left err -> failWith (show err)
         Right program -> do
           print program
-          putStrLn "=== Eval Output ==="
-          case runProgram program of
+          putStrLn "=== Type Check Output ==="
+          case typecheckProgram emptyTypeEnv program of
             Left err -> failWith (show err)
-            Right (output, env) -> do
-              mapM_ putStrLn output
-              putStrLn "=== Final Env ==="
-              print env
+            Right _ -> do
+              putStrLn "Type check passed."
+              putStrLn "=== Eval Output ==="
+              case runProgram program of
+                Left err -> failWith (show err)
+                Right (output, env) -> do
+                  mapM_ putStrLn output
+                  putStrLn "=== Final Env ==="
+                  print env
 
 failWith :: String -> IO ()
 failWith message = do
