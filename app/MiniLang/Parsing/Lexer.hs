@@ -37,9 +37,7 @@ lexProgram = go 1 1
               let (name, rest) = span isIdentChar current
                   token = keywordOrIdent name
                in (token :) <$> go line (column + length name) rest
-          | isDigit c ->
-              let (digits, rest) = span isDigit current
-               in (TokInt (read digits) :) <$> go line (column + length digits) rest
+          | isDigit c -> lexNumber line column current
           | c == '/' && startsLineComment cs ->
               let (rest, consumed) = skipLineComment cs
                in go line (column + consumed) rest
@@ -150,6 +148,17 @@ lexProgram = go 1 1
                     column
                     "invalid hexadecimal escape, expected \\xHH"
                 )
+
+    lexNumber :: Int -> Int -> String -> Either LexError [Token]
+    lexNumber line column input =
+      let (digits, rest) = span isDigit input
+       in case rest of
+            '.' : next : rest'
+              | isDigit next ->
+                  let (fraction, finalRest) = span isDigit (next : rest')
+                      literal = digits ++ "." ++ fraction
+                   in (TokFloat (read literal) :) <$> go line (column + length literal) finalRest
+            _ -> (TokInt (read digits) :) <$> go line (column + length digits) rest
 
     isIdentChar :: Char -> Bool
     isIdentChar c = isAlphaNum c || c == '_'

@@ -19,6 +19,7 @@ data Stmt
 
 data Expr
   = EInt Int
+  | EFloat Double
   | EBool Bool
   | EString String
   | EVar String

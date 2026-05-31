@@ -1,0 +1,1 @@
+Right (Program [SLet "pi" (EFloat 3.14),SLet "radius" (EFloat 2.0),SLet "area" (EMul (EMul (EVar "pi") (EVar "radius")) (EVar "radius")),SPrint (EVar "area")])

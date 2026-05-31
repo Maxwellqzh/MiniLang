@@ -207,6 +207,7 @@ parsePrimary tokens =
       (body, rest2) <- parseBlock rest1
       Right (ELambda params body, rest2)
     TokInt n : rest -> Right (EInt n, rest)
+    TokFloat n : rest -> Right (EFloat n, rest)
     TokString s : rest -> Right (EString s, rest)
     TokTrue : rest -> Right (EBool True, rest)
     TokFalse : rest -> Right (EBool False, rest)
