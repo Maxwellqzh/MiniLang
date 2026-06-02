@@ -491,93 +491,11 @@ Parser 会检测：
 - pattern 格式错误
 - 尾部存在未消费 token
 
-## Backend 
+## TypeCheck
 
-Backend 的核心入口：
+TypeCheck 位于 Parser 和 Backend 之间。Parser 负责把源码转换成 AST；TypeCheck 在 AST 进入 Backend 前先做静态检查；只有类型检查通过后，程序才会进入解释执行阶段。
 
-```haskell
-runProgram :: Program -> Either RuntimeError (Output, Env)
-```
-
-也就是说，Backend 的输入是 Parser 产生的 AST，输出是：
-
-- `Output`：程序中所有 `print` 产生的文本列表
-- `Env`：程序结束后的最终运行时环境
-- `RuntimeError`：解释执行阶段发生的错误
-
-### 运行时值
-
-```haskell
-type Env = Map.Map String Value
-
-data Value
-  = VInt Int
-  | VFloat Double
-  | VBool Bool
-  | VString String
-  | VUnit
-  | VFunction [String] [Stmt] Env
-  | VConstructor String [Value]
-  | VConstructorFunction String Int
-```
-
-说明：
-
-- `VInt`、`VFloat`、`VBool`、`VString` 分别表示整数、浮点数、布尔值和字符串。
-- `VUnit` 表示没有显式返回值。
-- `VFunction` 表示函数闭包，保存参数、函数体和定义时环境。
-- `VConstructor` 表示已经构造出来的 ADT 值，例如 `Nil` 或 `Cons(1, Nil)`。
-- `VConstructorFunction` 表示 `data` 声明注册出来的带参数构造器。
-- 函数值显示为 `<function>`，避免递归打印闭包环境。
-- 构造器函数显示为 `<constructor Name>`。
-- 普通相等比较不允许比较函数值；整数和浮点数可以进行混合数值运算与比较。
-
-### 执行控制流
-
-Backend 内部使用执行信号区分普通执行和函数返回：
-
-```haskell
-data ExecSignal
-  = Continue
-  | Returned Value
-```
-
-`return` 不是普通值绑定，而是控制流信号。这个信号会从嵌套的 `if`、`while` 和语句块中向外传播，直到函数调用边界被消费。
-
-### 运行时错误
-
-当前运行时错误包括：
-
-```haskell
-data RuntimeError
-  = UndefinedVariable String
-  | TypeMismatch String
-  | DivisionByZero
-  | ArityMismatch Int Int
-  | ConstructorArityMismatch String Int Int
-  | UnknownConstructor String
-  | NotCallable String
-  | MatchFailure
-  | InvalidPattern String
-  | ReturnOutsideFunction
-```
-
-典型场景：
-
-- 读取未定义变量：`UndefinedVariable`
-- 对不支持的类型做算术、比较或控制流判断：`TypeMismatch`
-- 除以零：`DivisionByZero`
-- 函数参数数量不匹配：`ArityMismatch`
-- 构造器参数数量不匹配：`ConstructorArityMismatch`
-- 调用未知大写构造器：`UnknownConstructor`
-- 调用非函数/非构造器函数值：`NotCallable`
-- `match` 没有任何分支匹配：`MatchFailure`
-- 构造器 pattern 字段数量不合法：`InvalidPattern`
-- 顶层使用 `return`：`ReturnOutsideFunction`
-
-## TypeCheck 
-
-TypeCheck 位于 Parser 和 Backend 之间：
+核心入口是：
 
 ```haskell
 typecheckProgram :: TypeEnv -> Program -> Either TypeError TypeEnv
@@ -623,27 +541,117 @@ newtype TC a = TC
 
 ### 合一算法
 
-`unifyWith` 用来断言两个类型必须兼容。遇到类型变量时，它会把变量绑定到具体类型；遇到函数类型时，它会递归检查参数和返回值。
+合一算法的目标是把“期望类型”和“实际类型”约束到同一个类型上。MiniLang 中对应的实现入口是：
 
-例如，期望类型和实际类型分别为：
-
-```txt
-Fun [t1]     -> Int
-Fun [String] -> t2
+```haskell
+unifyWith :: String -> Type -> Type -> TC ()
 ```
 
-合一后替换表会增加：
+第一个参数 `context` 用来生成更清晰的错误信息，例如 `"if condition"`、`"function argument"` 或 `"assignment to \"x\""`。后两个参数分别表示当前语境下的期望类型和实际推导出的类型。
+
+合一前，算法会先调用 `resolveType` 把类型变量替换成当前已知的具体类型：
+
+```haskell
+expectedResolved <- resolveType expected
+actualResolved <- resolveType actual
+```
+
+例如，替换表里已经有 `t1 = String` 时，`resolveType (TVar t1)` 会继续追踪并得到 `String`。这样可以避免在旧类型变量上重复推断，也能让后续错误信息显示更接近最终类型。
+
+从实现角度看，合一不是一次简单的 `Eq` 比较，而是“解析类型变量、记录约束、递归检查结构”的过程。核心规则可以分成四类：
+
+1. 变量绑定：如果任意一边是类型变量 `TVar var`，就尝试把它绑定到另一边的类型。
+2. 基础类型：`Int`、`Float`、`Bool`、`String`、`Unit` 只有和自身合一时成功。
+3. ADT 类型：`TData expectedName` 和 `TData actualName` 只有名称相同才成功。
+4. 函数类型：`TFun expectedArgs expectedResult` 和 `TFun actualArgs actualResult` 会先检查参数数量，再递归合一每个参数，最后合一返回值。
+
+对应代码结构是：
+
+```haskell
+case (expectedResolved, actualResolved) of
+  (TVar var, ty) -> bindTypeVar var ty
+  (ty, TVar var) -> bindTypeVar var ty
+  (TInt, TInt) -> pure ()
+  (TFloat, TFloat) -> pure ()
+  (TBool, TBool) -> pure ()
+  (TString, TString) -> pure ()
+  (TUnit, TUnit) -> pure ()
+  (TData expectedName, TData actualName)
+    | expectedName == actualName -> pure ()
+  (TFun expectedArgs expectedResult, TFun actualArgs actualResult) -> do
+    checkArity expectedArgs actualArgs
+    zipWithM_ (unifyWith context) expectedArgs actualArgs
+    unifyWith context expectedResult actualResult
+  _ -> throwTC (ExpectedType context expectedResolved actualResolved)
+```
+
+这段逻辑体现了两个关键点。第一，类型变量是可以继续被约束的未知量；第二，复杂类型必须按结构递归检查，不能只看最外层构造器。
+
+类型变量绑定由 `bindTypeVar` 完成。它除了写入替换表，还会做 occurs check：
+
+```haskell
+if occursIn var ty
+  then throwTC (InfiniteType var ty)
+  else modifySubst (Map.insert var ty)
+```
+
+occurs check 用来防止无限类型。例如，不能把 `t0` 绑定成包含自身的函数类型 `t0 -> Int`。如果允许这种绑定，后续 `resolveType` 会无限展开。这里的失败会被表示成 `InfiniteType var ty`，说明检查器发现了无法构造的递归类型。
+
+替换表的作用可以用一个小例子说明。假设推断过程中已经知道：
+
+```txt
+t0 = t1
+t1 = String
+```
+
+那么再次解析 `t0` 时，`resolveType` 会顺着替换表继续应用替换，最终得到 `String`，而不是停在中间的 `t1`：
+
+```haskell
+applySubstType subst (TVar var) =
+  case Map.lookup var subst of
+    Nothing -> TVar var
+    Just resolved -> applySubstType subst resolved
+```
+
+这也是每条语句检查完成后需要调用 `normalizeEnv` 的原因。`TypeEnv` 中可能暂时保存着 `t0`、`t1` 这样的未知类型；在把环境交给后续语句或 REPL 下一轮之前，需要尽量把它们解析成当前替换表下的最终类型。
+
+函数类型是合一算法最能体现递归结构的地方。假设有两种类型：
+
+```txt
+期望类型：Fun [t1]     -> Int
+实际类型：Fun [String] -> t2
+```
+
+`unifyWith` 会先确认两边都是函数类型，再执行两步：
+
+1. 合一参数列表：`t1` 与 `String` 合一，得到 `t1 = String`。
+2. 合一返回值：`Int` 与 `t2` 合一，得到 `t2 = Int`。
+
+最终替换表增加：
 
 ```txt
 t1 = String
 t2 = Int
 ```
 
-最终得到统一类型：
+因此最终统一后的函数类型是：
 
 ```txt
 Fun [String] -> Int
 ```
+
+这个过程也解释了函数调用检查为什么可以同时完成“参数类型检查”和“返回值推断”。在 `inferCall` 中，如果被调用对象已经是函数类型：
+
+```haskell
+TFun paramTypes resultType -> do
+  checkArity paramTypes argTypes
+  zipWithM_ (unifyWith "function argument") paramTypes argTypes
+  resolveType resultType
+```
+
+它会先检查参数数量，再把每个形参类型和实参类型合一，最后解析返回类型。只要任意一个实参无法和形参统一，就会在执行前报错。
+
+数值运算也会产生类型约束。例如 `x + 1` 要求 `x` 是数值类型；`if (cond) { ... }` 会要求 `cond` 与 `Bool` 合一；两个分支都有 `return` 时，两个返回值类型也必须合一。也就是说，合一算法是 TypeCheck 中连接表达式推断、函数调用、控制流和赋值检查的核心机制。
 
 ### 赋值类型安全
 
@@ -671,7 +679,6 @@ SAssign name expr -> do
 - 泛型 ADT
 - 模式匹配穷尽性检查
 - 嵌套模式和字面量模式
-- 类型错误的位置标注
 - 独立的数值类型类；两个尚未约束的参数直接参与数值运算时，当前实现会默认推断为 `Int`
 
 实现文件主要是：
@@ -721,7 +728,7 @@ data ReplState = ReplState
 
 截图中的 `base` 在第一轮输入后被保存在环境中；第二轮定义的 `addBase` 闭包可以继续引用它；后续调用 `addBase(5)` 得到 `15`。最后，`:env` 打印出当前环境中的变量和函数。
 
-### 错误容错
+### 输入容错
 
 REPL 对三类错误分别进行拦截：
 
@@ -742,6 +749,339 @@ REPL 对三类错误分别进行拦截：
 - `:quit`：退出 REPL。
 
 `:` 命令只在当前输入块为空时识别。源码可以单行输入，也可以多行输入；空行表示提交当前输入块。
+
+## Backend
+
+Backend 的核心入口：
+
+```haskell
+runProgram :: Program -> Either RuntimeError (Output, Env)
+```
+
+也就是说，Backend 的输入是 Parser 产生的 AST，输出是：
+
+- `Output`：程序中所有 `print` 产生的文本列表
+- `Env`：程序结束后的最终运行时环境
+- `RuntimeError`：解释执行阶段发生的错误
+
+### Backend 执行入口
+
+Backend 的入口分为两层：
+
+```haskell
+runProgram :: Program -> Either RuntimeError (Output, Env)
+runProgramWithEnv :: Env -> Program -> Either RuntimeError (Output, Env)
+```
+
+`runProgram` 是普通文件执行入口，它从空运行时环境开始执行；`runProgramWithEnv` 接收一个已有 `Env`，因此可以被 REPL 复用，让多轮输入之间共享变量、函数和构造器。
+
+核心流程可以概括为：
+
+```txt
+Program [Stmt]
+  -> execBlock False initialEnv [] stmts
+  -> Either RuntimeError (Output, Env)
+```
+
+这里的 `False` 表示顶层程序不允许直接使用 `return`。如果顶层语句触发了 `Returned`，`runProgramWithEnv` 会把它转换成 `ReturnOutsideFunction`，避免把函数内部控制流泄露到程序顶层。
+
+### 运行时值
+
+```haskell
+type Env = Map.Map String Value
+
+data Value
+  = VInt Int
+  | VFloat Double
+  | VBool Bool
+  | VString String
+  | VUnit
+  | VFunction [String] [Stmt] Env
+  | VConstructor String [Value]
+  | VConstructorFunction String Int
+```
+
+说明：
+
+- `Env` 是运行时环境，保存变量名、函数名和构造器名到 `Value` 的映射。
+- `VInt`、`VFloat`、`VBool`、`VString` 分别表示整数、浮点数、布尔值和字符串。
+- `VUnit` 表示没有显式返回值。
+- `VFunction` 表示函数闭包，保存参数、函数体和定义时环境。
+- `VConstructor` 表示已经构造出来的 ADT 值，例如 `Nil` 或 `Cons(1, Nil)`。
+- `VConstructorFunction` 表示 `data` 声明注册出来的带参数构造器。
+- 函数值显示为 `<function>`，避免递归打印闭包环境。
+- 构造器函数显示为 `<constructor Name>`。
+- 普通相等比较不允许比较函数值；整数和浮点数可以进行混合数值运算与比较。
+
+### 执行控制流
+
+Backend 内部使用执行信号区分普通执行和函数返回：
+
+```haskell
+data ExecSignal
+  = Continue
+  | Returned Value
+```
+
+`return` 不是普通值绑定，而是控制流信号。这个信号会从嵌套的 `if`、`while` 和语句块中向外传播，直到函数调用边界被消费。
+
+语句块执行函数是：
+
+```haskell
+execBlock :: Bool -> Env -> Output -> [Stmt] -> Either RuntimeError (ExecSignal, Env, Output)
+```
+
+`execBlock` 按顺序递归消费语句列表。每执行一条语句，都会得到新的 `Env`、新的 `Output` 和一个 `ExecSignal`：
+
+- 如果信号是 `Continue`，继续执行剩余语句。
+- 如果信号是 `Returned value`，立即停止当前语句块，并把返回信号向外传递。
+- 如果语句列表为空，返回 `Continue`、当前环境和当前输出。
+
+这种设计让 `return` 可以自然穿过 `if`、`while` 和函数体中的局部语句块，同时又不会被误写入环境。
+
+### 语句解释执行
+
+语句执行入口是：
+
+```haskell
+execStmt :: Bool -> Env -> Output -> Stmt -> Either RuntimeError (ExecSignal, Env, Output)
+```
+
+不同语句对运行时状态的影响不同：
+
+- `SLet name expr`：先调用 `evalExpr` 得到表达式值，再用 `Map.insert name value env` 写入环境。
+- `SAssign name expr`：先检查变量是否已经存在；如果存在，求值后覆盖旧绑定；如果不存在，返回 `UndefinedVariable`。
+- `SFun name params body`：构造 `VFunction params body recursiveEnv`，并把函数名写入 `recursiveEnv`，因此具名函数可以递归引用自身。
+- `SReturn expr`：只有 `allowReturn` 为 `True` 时才允许执行；否则返回 `ReturnOutsideFunction`。
+- `SPrint expr`：求出表达式值后，通过 `renderValue` 转成字符串，并追加到 `Output`。
+- `SIf cond thenBranch elseBranch`：先求条件表达式；只有 `VBool True` 和 `VBool False` 是合法条件，其他值会产生 `TypeMismatch`。
+- `SWhile cond body`：循环求条件表达式。条件为 `VBool True` 时执行循环体，条件为 `VBool False` 时结束循环。
+- `SData _ constructors`：调用 `registerConstructors`，把 ADT 构造器注册到运行时环境中。
+
+因此，`execStmt` 的职责不是直接“打印”或“返回最终结果”，而是让每条语句推动 `Env`、`Output` 或 `ExecSignal` 前进。
+
+### 表达式解释执行
+
+表达式求值入口是：
+
+```haskell
+evalExpr :: Env -> Output -> Expr -> Either RuntimeError (Value, Output)
+```
+
+表达式求值的结果是一个运行时 `Value`，同时保留最新的 `Output`。这是因为表达式内部可能包含函数调用，而函数调用内部可能执行 `print`。
+
+主要分支包括：
+
+- `EInt`、`EFloat`、`EBool`、`EString`：直接包装为对应的运行时值。
+- `EVar name`：从 `Env` 中查找变量；找不到时返回 `UndefinedVariable`。
+- `EAdd`、`ESub`、`EMul`：进入 `evalIntBinary`。
+- `EDiv`：进入 `evalDiv`，额外处理除零。
+- `ELt`、`ELe`、`EGt`、`EGe`：进入 `evalIntComparison`，返回布尔值。
+- `EEq`、`ENeq`：进入 `evalEquality`。
+- `ELambda params body`：返回 `VFunction params body env`，捕获定义时环境。
+- `EMatch scrutinee branches`：先求 `scrutinee`，再调用 `evalMatch` 选择分支。
+
+函数调用有一个特殊分支：
+
+```haskell
+ECall (EVar name) args -> ...
+ECall callee args -> ...
+```
+
+当被调用对象是变量名时，Backend 会先直接查 `Env`。如果没有找到，并且名字以大写字母开头，就返回 `UnknownConstructor`；如果是普通变量名，则返回 `UndefinedVariable`。当被调用对象是任意表达式时，Backend 会先求出 `calleeValue`，再求参数列表，最后统一交给 `callValue` 分派。
+
+### 函数、闭包与调用分派
+
+函数运行时值是：
+
+```haskell
+VFunction [String] [Stmt] Env
+```
+
+它保存三部分信息：
+
+- 参数名列表
+- 函数体语句列表
+- 定义函数时捕获到的环境
+
+匿名函数 `ELambda` 会直接把当前 `env` 捕获进 `VFunction`。具名函数 `SFun` 则使用递归环境：
+
+```haskell
+let closure = VFunction params body recursiveEnv
+    recursiveEnv = Map.insert name closure env
+```
+
+由于 `closure` 内部保存的是 `recursiveEnv`，函数体里可以再次通过函数名找到自己，因此 MiniLang 可以直接支持递归函数。
+
+实际调用由 `callValue` 统一处理：
+
+```haskell
+callValue :: Value -> [Value] -> Output -> Either RuntimeError (Value, Output)
+```
+
+当 `callee` 是 `VFunction params body closureEnv` 时，Backend 会先检查参数数量。如果数量匹配，就构造局部环境：
+
+```haskell
+localEnv = Map.fromList (zip params args) `Map.union` closureEnv
+```
+
+`Map.union` 左侧优先，因此参数绑定会覆盖闭包环境中的同名变量。随后函数体通过 `execBlock True localEnv output body` 执行。这里的 `True` 表示函数体内允许 `return`：
+
+- 如果函数体返回 `Returned value`，函数调用结果就是这个 `value`。
+- 如果函数体执行完仍是 `Continue`，函数默认返回 `VUnit`。
+
+当 `callee` 是 `VConstructorFunction` 时，`callValue` 会走构造器调用分支；当 `callee` 是其他值时，返回 `NotCallable`。
+
+### 数值运算与相等比较
+
+MiniLang 同时支持整数和浮点数，因此 Backend 把数值运算拆成几个辅助函数：
+
+```haskell
+evalIntBinary :: String -> (Int -> Int -> Int) -> (Double -> Double -> Double) -> Env -> Output -> Expr -> Expr -> Either RuntimeError (Value, Output)
+evalDiv :: Env -> Output -> Expr -> Expr -> Either RuntimeError (Value, Output)
+evalIntComparison :: String -> (Double -> Double -> Bool) -> Env -> Output -> Expr -> Expr -> Either RuntimeError (Value, Output)
+evalEquality :: Bool -> Env -> Output -> Expr -> Expr -> Either RuntimeError (Value, Output)
+```
+
+`evalIntBinary` 用于 `+`、`-` 和 `*`：
+
+- 如果左右值都是 `VInt`，结果保持为 `VInt`。
+- 如果存在 `VFloat`，或者整数需要参与混合运算，则通过 `toDouble` 转成浮点数，结果为 `VFloat`。
+- 如果任一操作数不是数值，返回 `TypeMismatch`。
+
+`evalDiv` 单独处理除法，因为它需要检查除零：
+
+- `VInt _ / VInt 0` 返回 `DivisionByZero`。
+- 浮点除法中，如果右侧转换后是 `0.0`，也返回 `DivisionByZero`。
+- 两个整数相除使用整数 `div`，混合数值除法返回 `VFloat`。
+
+`evalIntComparison` 用于 `<`、`<=`、`>` 和 `>=`。它会把左右操作数转换为数值后比较，并返回 `VBool`。
+
+`evalEquality` 用于 `==` 和 `!=`。函数值和构造器函数不能比较；其他值会先尝试数值相等比较，如果不是数值，再使用 `Value` 的结构相等。
+
+### ADT 构造器注册与调用
+
+`data` 声明在 Backend 中不会立即生成具体数据，而是把构造器入口写入 `Env`：
+
+```haskell
+registerConstructors :: [ConstructorDef] -> Env -> Env
+```
+
+注册规则是：
+
+- 零字段构造器注册为 `VConstructor name []`，例如 `Nil`。
+- 带字段构造器注册为 `VConstructorFunction name arity`，例如 `Cons(head, tail)` 会注册为 `VConstructorFunction "Cons" 2`。
+
+因此：
+
+```minilang
+data List { Nil; Cons(head, tail); }
+```
+
+在运行时会把 `Nil` 和 `Cons` 都写入环境，但二者含义不同：`Nil` 已经是一个完整的 ADT 值，而 `Cons` 是等待参数的构造器函数。
+
+构造器调用和普通函数调用一样使用 `ECall` 表示，最终都进入 `callValue`。当被调用值是 `VConstructorFunction name arity` 时，Backend 会检查参数数量：
+
+```haskell
+if length args == arity
+  then Right (VConstructor name args, output)
+  else Left (ConstructorArityMismatch name arity (length args))
+```
+
+也就是说，`Cons(1, Nil)` 最终会生成类似下面的运行时值：
+
+```haskell
+VConstructor "Cons" [VInt 1, VConstructor "Nil" []]
+```
+
+### match 模式匹配
+
+`match` 表达式首先求被匹配值，然后按分支顺序尝试匹配：
+
+```haskell
+evalMatch :: Env -> Output -> Value -> [(Pattern, Expr)] -> Either RuntimeError (Value, Output)
+matchPattern :: Pattern -> Value -> Either RuntimeError (Maybe Env)
+```
+
+`matchPattern` 的返回值有三种含义：
+
+- `Right Nothing`：当前分支不匹配，继续尝试下一个分支。
+- `Right (Just bindings)`：当前分支匹配成功，并产生字段绑定。
+- `Left (InvalidPattern message)`：构造器名称匹配，但 pattern 字段数量不正确。
+
+支持的 pattern 包括：
+
+- `_`：通配符，匹配任意值，不产生绑定。
+- `PVar name`：变量模式，匹配任意值，并把整个值绑定到 `name`。
+- `PConstructor name fields`：构造器模式，要求被匹配值是同名 `VConstructor`。
+
+当构造器模式匹配成功时，Backend 使用字段名和构造器值中的字段值建立绑定：
+
+```haskell
+Map.fromList (zip fields values)
+```
+
+随后分支表达式会在扩展环境中求值：
+
+```haskell
+evalExpr (bindings `Map.union` env) output expr
+```
+
+这里 `bindings` 放在 `Map.union` 左侧，因此 pattern 绑定会优先于外层环境中的同名变量。若所有分支都不匹配，`evalMatch` 返回 `MatchFailure`。
+
+### 输出渲染与错误传播
+
+`Output` 的类型是字符串列表。`SPrint` 不直接执行 IO，而是把渲染后的文本追加到 `Output`：
+
+```haskell
+Right (Continue, env, nextOutput ++ [renderValue value])
+```
+
+最后由 `Main` 或 REPL 负责把 `Output` 打印到终端。这样可以让解释器核心保持纯函数风格，也便于测试直接断言输出列表。
+
+错误统一通过 `Either RuntimeError` 的 `Left` 分支向上传播。只要某一步求值失败，后续执行就会停止，错误交给 `Main` 或 REPL 展示。
+
+### 运行时错误
+
+当前运行时错误包括：
+
+```haskell
+data RuntimeError
+  = UndefinedVariable String
+  | TypeMismatch String
+  | DivisionByZero
+  | ArityMismatch Int Int
+  | ConstructorArityMismatch String Int Int
+  | UnknownConstructor String
+  | NotCallable String
+  | MatchFailure
+  | InvalidPattern String
+  | ReturnOutsideFunction
+```
+
+典型场景：
+
+- 读取未定义变量：`UndefinedVariable`
+- 对不支持的类型做算术、比较或控制流判断：`TypeMismatch`
+- 除以零：`DivisionByZero`
+- 函数参数数量不匹配：`ArityMismatch`
+- 构造器参数数量不匹配：`ConstructorArityMismatch`
+- 调用未知大写构造器：`UnknownConstructor`
+- 调用非函数/非构造器函数值：`NotCallable`
+- `match` 没有任何分支匹配：`MatchFailure`
+- 构造器 pattern 字段数量不合法：`InvalidPattern`
+- 顶层使用 `return`：`ReturnOutsideFunction`
+
+### Backend 与 TypeCheck / REPL 的关系
+
+当前 main 分支中，文件执行流程已经把 TypeCheck 放在 Backend 之前。也就是说，`Main.hs` 会先调用 `parseProgram` 得到 AST，再调用 `typecheckProgram emptyTypeEnv program` 做静态检查；只有类型检查通过后，才会进入 `runProgram`。
+
+REPL 中的流程类似，但它会维护两份状态：
+
+- `replTypeEnv`：传给 `typecheckProgram`，保证多轮输入之间类型一致。
+- `replRuntimeEnv`：传给 `runProgramWithEnv`，保证多轮输入之间运行时值可见。
+
+因此，Backend 负责的是“已经通过语法解析和类型检查之后”的解释执行。但它仍然保留完整的 `RuntimeError`，因为运行时仍可能出现静态阶段无法完全消除的情况，例如除零、运行时不可调用值、match 无匹配分支等。
 
 ## 示例输入
 
@@ -848,6 +1188,7 @@ Left (UndefinedVariable "missing")
 
 - Parsing 层负责源码到 AST。
 - TypeCheck 层负责执行前的静态类型检查。
+- Repl 层负责提供交互式命令行。
 - Backend 层负责 AST 到执行结果。
 - Main 层负责把三部分串起来做调试运行。
 - Test 层负责覆盖关键解释执行路径。
