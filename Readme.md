@@ -579,21 +579,96 @@ TypeCheck 位于 Parser 和 Backend 之间：
 typecheckProgram :: TypeEnv -> Program -> Either TypeError TypeEnv
 ```
 
-`TypeEnv` 记录当前作用域里的变量、函数和构造器类型。文件运行时从 `emptyTypeEnv` 开始；REPL 会把上一轮保存的运行时环境和类型环境一起传给下一轮，因此状态可以连续累积。
+`TypeEnv` 记录当前作用域里的变量、函数和构造器类型。文件运行时从 `emptyTypeEnv` 开始；REPL 则会把上一轮保存的类型环境传给下一轮，因此多次输入之间可以持续检查类型一致性。
 
-当前这个类型检查器是单态、流敏感的实用版实现，支持：
+当前实现借鉴了 Hindley-Milner 类型推断中的合一思想，但范围更小：它是一个面向 MiniLang AST 的单态、流敏感类型检查器。支持：
 
 - `Int`、`Float`、`Bool`、`String`、`Unit`
 - 函数类型和高阶函数
 - `data` 构造器和 `match`
-- `let` 和赋值语句的类型一致性
+- `let` 的类型推断和赋值语句的类型一致性
 - `if` / `while` 条件必须是 `Bool`
 - 函数调用参数数量和参数类型检查
 - `return` 只能出现在函数体内
 - 函数体中所有返回路径的类型统一
 - 数值运算和比较的静态约束
 
-其中最关键的一个修复是赋值语句：`x = expr;` 现在不会把 `x` 的旧类型直接覆盖掉，而是先取出原类型，再和新表达式类型做统一，避免 REPL 里静默变型。
+### 类型状态与替换表
+
+类型推断过程中需要持续分配新的类型变量，并保存已经推导出的替换关系。实现中使用 `TCState` 显式维护这两部分状态：
+
+```haskell
+data TCState = TCState
+  { tcNextVar :: Int
+  , tcSubst :: Map.Map Int Type
+  }
+```
+
+- `tcNextVar`：为新的未知类型分配唯一编号，例如 `t0`、`t1`。
+- `tcSubst`：记录类型变量的替换关系，例如 `t0 = String`。
+
+`TC` Monad 把“旧状态 -> 推导结果或错误 -> 新状态”的过程封装起来：
+
+```haskell
+newtype TC a = TC
+  { runTC :: TCState -> Either TypeError (a, TCState)
+  }
+```
+
+这样，检查 AST 节点时既可以更新替换表，也可以在发现类型错误时立即返回 `Left TypeError`。
+
+### 合一算法
+
+`unifyWith` 用来断言两个类型必须兼容。遇到类型变量时，它会把变量绑定到具体类型；遇到函数类型时，它会递归检查参数和返回值。
+
+例如，期望类型和实际类型分别为：
+
+```txt
+Fun [t1]     -> Int
+Fun [String] -> t2
+```
+
+合一后替换表会增加：
+
+```txt
+t1 = String
+t2 = Int
+```
+
+最终得到统一类型：
+
+```txt
+Fun [String] -> Int
+```
+
+### 赋值类型安全
+
+赋值语句是类型检查中特别重要的一处。变量已经定义后，新的赋值不能悄悄改变它的类型：
+
+```haskell
+SAssign name expr -> do
+  expectedType <- lookupType env name
+  exprType <- inferExpr env expr
+  unifyWith ("assignment to " ++ show name) expectedType exprType
+  resolvedType <- resolveType expectedType
+  resolvedEnv <- normalizeEnv env
+  pure (continueWith (Map.insert name resolvedType resolvedEnv))
+```
+
+例如，`x` 已经被推断为 `Int` 后，再赋值为字符串会在执行前被拦截：
+
+![TypeCheck 拒绝非法重赋值](docs/images/typecheck-assignment-error.png)
+
+### 当前边界
+
+当前实现是实用版静态检查器，不是完整的 Hindley-Milner 系统。暂不包含：
+
+- let-polymorphism
+- 泛型 ADT
+- 模式匹配穷尽性检查
+- 嵌套模式和字面量模式
+- 类型错误的位置标注
+- 独立的数值类型类；两个尚未约束的参数直接参与数值运算时，当前实现会默认推断为 `Int`
 
 实现文件主要是：
 
@@ -601,11 +676,21 @@ typecheckProgram :: TypeEnv -> Program -> Either TypeError TypeEnv
 - `app/MiniLang/Typecheck/Error.hs`
 - `app/MiniLang/Typecheck/Checker.hs`
 
-测试里也加了几条对应的 smoke case，覆盖赋值类型稳定性、混合数值比较和 ADT / `match` 的静态通过路径。
-
 ## REPL 如何实现
 
-REPL 入口位于 `MiniLang.Repl`。它维护的是一个显式状态：
+REPL 入口位于 `MiniLang.Repl`。启动命令：
+
+```bash
+cabal run exe:MiniLang -- repl
+```
+
+启动后输入 `:help` 可以查看当前支持的命令：
+
+![REPL 启动与帮助命令](docs/images/repl-help.png)
+
+### 双环境状态
+
+REPL 不只是重复调用解释器，还需要在多次输入之间保存状态。实现中使用 `ReplState` 同时维护运行时环境和类型环境：
 
 ```haskell
 data ReplState = ReplState
@@ -613,6 +698,9 @@ data ReplState = ReplState
   , replTypeEnv :: TypeEnv
   }
 ```
+
+- `replRuntimeEnv`：保存实际运行时值，例如变量、函数闭包和构造器。
+- `replTypeEnv`：保存对应的静态类型，供下一轮输入继续做类型检查。
 
 每轮循环大致是：
 
@@ -623,17 +711,33 @@ data ReplState = ReplState
 5. 只有执行成功时，才提交新的运行时环境和类型环境。
 6. 解析失败、类型检查失败或运行时失败时，保留旧状态继续会话。
 
+因此，REPL 可以跨多轮输入保留变量和函数：
+
+![REPL 多行输入与环境持久化](docs/images/repl-persistent-env.png)
+
+截图中的 `base` 在第一轮输入后被保存在环境中；第二轮定义的 `addBase` 闭包可以继续引用它；后续调用 `addBase(5)` 得到 `15`。最后，`:env` 打印出当前环境中的变量和函数。
+
+### 错误容错
+
+REPL 对三类错误分别进行拦截：
+
+- Parse 错误：源码不能构成合法 AST。
+- TypeCheck 错误：AST 存在静态类型不匹配。
+- Eval 错误：通过静态检查后，执行阶段仍然失败。
+
+任意阶段失败时，REPL 都只打印错误，不提交本轮产生的新环境。下一次循环仍然使用之前保存的状态。这样，一次错误输入不会破坏已经定义好的变量和函数。
+
+### REPL 命令
+
 支持的命令有：
 
-- `:help`
-- `:env`
-- `:reset`
-- `:q`
-- `:quit`
+- `:help`：显示帮助。
+- `:env`：打印当前运行时环境。
+- `:reset`：同时清空运行时环境和类型环境。
+- `:q`：退出 REPL。
+- `:quit`：退出 REPL。
 
-`:` 命令只在当前输入块为空时识别。`:env` 只打印当前运行时环境；`:reset` 会把运行时环境和类型环境一起清空。
-
-REPL 的核心价值是可以在同一会话里连续定义变量、函数和 ADT，并让后续输入沿用前面的静态和运行时状态。
+`:` 命令只在当前输入块为空时识别。源码可以单行输入，也可以多行输入；空行表示提交当前输入块。
 
 ## 示例输入
 
